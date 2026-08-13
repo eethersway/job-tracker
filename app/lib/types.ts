@@ -80,6 +80,8 @@ export interface Profile {
   extra_context_md: string | null;
   anthropic_api_key: string | null;
   capture_token: string | null;
+  /** Personal token for the MCP/API endpoint (separate from capture_token). */
+  api_token: string | null;
   onboarding_dismissed: boolean;
   /** Pay-as-you-go credit balance in US cents (unused when a key is set). */
   credits_cents: number;

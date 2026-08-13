@@ -72,7 +72,7 @@ Deno.serve(async (req: Request) => {
       .eq("user_id", app.user_id)
       .maybeSingle();
     if (!profile?.master_resume_md) {
-      return json({ ok: false, error: "No master resume found - fill out Settings first." }, 400);
+      return json({ ok: false, error: "No master resume found - fill out your Profile first." }, 400);
     }
 
     // Billing: BYO key = free tier; otherwise use the central key and spend credits.

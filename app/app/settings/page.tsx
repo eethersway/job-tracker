@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/AppShell";
 import { LoadingBlock, Spinner } from "@/components/Spinner";
 import { useToast } from "@/components/Toast";
-import { ExtensionSteps } from "@/components/ExtensionSteps";
+import { ExtensionSteps, FUNCTIONS_BASE_URL } from "@/components/ExtensionSteps";
 import { formatDateTime } from "@/lib/format";
 import { generateCaptureToken } from "@/lib/token";
 import type { Profile } from "@/lib/types";
@@ -14,9 +14,16 @@ import type { Profile } from "@/lib/types";
 const inputCls =
   "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-sky-500";
 const labelCls = "mb-1 block text-xs font-medium text-slate-400";
-const textareaCls =
-  "w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200 placeholder-slate-600 outline-none focus:border-sky-500";
 
+/** HTTP endpoint of the MCP edge function (read-only, shown for LLM clients). */
+const MCP_ENDPOINT_URL = `${FUNCTIONS_BASE_URL}/mcp`;
+
+/**
+ * Settings: AI & extension configuration only (API key + capture token +
+ * extension install). Resume content lives on the Profile page. The upsert
+ * here deliberately includes ONLY the fields this page owns, so it can never
+ * clobber the resume fields managed on /profile.
+ */
 export default function SettingsPage() {
   const { showToast } = useToast();
 
@@ -24,25 +31,12 @@ export default function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
-  // Contact info (always included in generated resumes)
-  const [fullName, setFullName] = useState("");
-  const [locationVal, setLocationVal] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [linkedinUrl, setLinkedinUrl] = useState("");
-  const [website, setWebsite] = useState("");
-
-  // Content sections
-  const [masterResume, setMasterResume] = useState("");
-  const [highlights, setHighlights] = useState("");
-  const [skills, setSkills] = useState("");
-  const [extraContext, setExtraContext] = useState("");
-
-  // AI & extension
   const [anthropicKey, setAnthropicKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [captureToken, setCaptureToken] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [apiToken, setApiToken] = useState<string | null>(null);
+  const [regeneratingApiToken, setRegeneratingApiToken] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -58,21 +52,12 @@ export default function SettingsPage() {
       if (error) throw new Error(error.message);
       const p = (data as Profile | null) ?? null;
       setProfile(p);
-      setFullName(p?.full_name ?? "");
-      setLocationVal(p?.location ?? "");
-      setPhone(p?.phone ?? "");
-      setEmail(p?.email ?? "");
-      setLinkedinUrl(p?.linkedin_url ?? "");
-      setWebsite(p?.website ?? "");
-      setMasterResume(p?.master_resume_md ?? "");
-      setHighlights(p?.highlights_md ?? "");
-      setSkills(p?.skills_md ?? "");
-      setExtraContext(p?.extra_context_md ?? "");
       setAnthropicKey(p?.anthropic_api_key ?? "");
       setCaptureToken(p?.capture_token ?? null);
+      setApiToken(p?.api_token ?? null);
     } catch (err) {
       setLoadError(
-        err instanceof Error ? err.message : "Failed to load profile."
+        err instanceof Error ? err.message : "Failed to load settings."
       );
     } finally {
       setLoading(false);
@@ -88,38 +73,27 @@ export default function SettingsPage() {
     try {
       const supabase = createClient();
       const userId = (await supabase.auth.getUser()).data.user!.id;
-      const now = new Date().toISOString();
-      // Auto-generate a capture token on first save if none exists yet.
+      // Auto-generate tokens on first save if none exist yet.
       const token = captureToken ?? generateCaptureToken();
+      const mcpToken = apiToken ?? generateCaptureToken();
+      // Only the fields this page owns — never resume/contact content
+      // (that belongs to the Profile page).
       const row = {
         user_id: userId,
-        full_name: fullName.trim() || null,
-        location: locationVal.trim() || null,
-        phone: phone.trim() || null,
-        email: email.trim() || null,
-        linkedin_url: linkedinUrl.trim() || null,
-        website: website.trim() || null,
-        master_resume_md: masterResume || null,
-        highlights_md: highlights || null,
-        skills_md: skills || null,
-        extra_context_md: extraContext || null,
         anthropic_api_key: anthropicKey.trim() || null,
         capture_token: token,
-        updated_at: now,
+        api_token: mcpToken,
+        updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
         .from("profile")
         .upsert(row, { onConflict: "user_id" });
       if (error) throw new Error(error.message);
       setCaptureToken(token);
-      setProfile((prev) => ({
-        onboarding_dismissed: prev?.onboarding_dismissed ?? false,
-        credits_cents: prev?.credits_cents ?? 0,
-        ...prev,
-        ...row,
-      }));
+      setApiToken(mcpToken);
+      setProfile((prev) => (prev ? { ...prev, ...row } : prev));
       setDirty(false);
-      showToast("Profile saved.", "success");
+      showToast("Settings saved.", "success");
     } catch (err) {
       showToast(
         `Could not save: ${
@@ -174,12 +148,51 @@ export default function SettingsPage() {
     }
   }
 
-  const mark =
-    <T,>(setter: (v: T) => void) =>
-    (v: T) => {
-      setter(v);
-      setDirty(true);
-    };
+  async function copyText(value: string | null, what: string) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast(`${what} copied.`, "success");
+    } catch {
+      showToast("Copy failed — your browser blocked clipboard access.", "error");
+    }
+  }
+
+  async function regenerateApiToken() {
+    setRegeneratingApiToken(true);
+    try {
+      const supabase = createClient();
+      const userId = (await supabase.auth.getUser()).data.user!.id;
+      const token = generateCaptureToken();
+      const { error } = await supabase.from("profile").upsert(
+        {
+          user_id: userId,
+          api_token: token,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+      if (error) throw new Error(error.message);
+      setApiToken(token);
+      showToast(
+        "New API token saved — update it in any connected LLM clients too.",
+        "success"
+      );
+    } catch (err) {
+      showToast(
+        `Could not regenerate token: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+        "error"
+      );
+    } finally {
+      setRegeneratingApiToken(false);
+    }
+  }
+
+  const mcpAddCommand = `claude mcp add jobtracker --transport http ${MCP_ENDPOINT_URL} --header "Authorization: Bearer ${
+    apiToken ?? "<token>"
+  }"`;
 
   return (
     <AppShell>
@@ -212,7 +225,7 @@ export default function SettingsPage() {
       ) : loadError ? (
         <div className="rounded-xl border border-red-500/30 bg-red-950/30 p-6 text-center">
           <p className="text-sm text-red-300">
-            Could not load your profile: {loadError}
+            Could not load your settings: {loadError}
           </p>
           <button
             onClick={() => {
@@ -234,7 +247,14 @@ export default function SettingsPage() {
             <p className="mt-1 max-w-2xl text-sm text-slate-400">
               Your API key powers company research and document generation; the
               capture token lets the Chrome extension save jobs into your
-              account.
+              account. Looking for your resume content? That&apos;s on the{" "}
+              <Link
+                href="/profile"
+                className="text-sky-400 underline-offset-2 hover:underline"
+              >
+                Profile
+              </Link>{" "}
+              page.
             </p>
 
             <div className="mt-4 space-y-5">
@@ -248,7 +268,10 @@ export default function SettingsPage() {
                     type={showKey ? "text" : "password"}
                     autoComplete="off"
                     value={anthropicKey}
-                    onChange={(e) => mark(setAnthropicKey)(e.target.value)}
+                    onChange={(e) => {
+                      setAnthropicKey(e.target.value);
+                      setDirty(true);
+                    }}
                     placeholder="sk-ant-…"
                     className={inputCls}
                   />
@@ -329,177 +352,84 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          {/* Contact info */}
+          {/* LLM / MCP access */}
           <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
             <h2 className="text-base font-semibold text-slate-100">
-              Contact Info
+              LLM / MCP Access
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Included in the header of every generated resume: name, location,
-              phone, and LinkedIn are always shown.
+              Connect your tracker to Claude or any MCP-capable LLM client —
+              it can read your applications, research, documents, and profile,
+              and add/update applications.
             </p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label htmlFor="full-name" className={labelCls}>
-                  Full name *
+
+            <div className="mt-4 space-y-5">
+              <div className="max-w-xl">
+                <label htmlFor="mcp-endpoint" className={labelCls}>
+                  MCP endpoint
                 </label>
-                <input
-                  id="full-name"
-                  value={fullName}
-                  onChange={(e) => mark(setFullName)(e.target.value)}
-                  placeholder="Jane Doe"
-                  className={inputCls}
-                />
+                <div className="flex gap-2">
+                  <input
+                    id="mcp-endpoint"
+                    readOnly
+                    value={MCP_ENDPOINT_URL}
+                    className={`${inputCls} font-mono text-xs`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void copyText(MCP_ENDPOINT_URL, "Endpoint URL")
+                    }
+                    className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
+                  >
+                    Copy
+                  </button>
+                </div>
               </div>
-              <div>
-                <label htmlFor="location" className={labelCls}>
-                  Location *
+
+              <div className="max-w-xl">
+                <label htmlFor="api-token" className={labelCls}>
+                  API token
                 </label>
-                <input
-                  id="location"
-                  value={locationVal}
-                  onChange={(e) => mark(setLocationVal)(e.target.value)}
-                  placeholder="Seattle, WA"
-                  className={inputCls}
-                />
+                <div className="flex gap-2">
+                  <input
+                    id="api-token"
+                    readOnly
+                    value={apiToken ?? ""}
+                    placeholder="Generated on first save"
+                    className={`${inputCls} font-mono text-xs`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyText(apiToken, "API token")}
+                    disabled={!apiToken}
+                    className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void regenerateApiToken()}
+                    disabled={regeneratingApiToken}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {regeneratingApiToken && <Spinner className="h-3 w-3" />}
+                    Regenerate
+                  </button>
+                </div>
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Sent as a Bearer token by your LLM client. Keep it secret —
+                  regenerating invalidates the old one.
+                </p>
               </div>
+
               <div>
-                <label htmlFor="phone" className={labelCls}>
-                  Phone *
-                </label>
-                <input
-                  id="phone"
-                  value={phone}
-                  onChange={(e) => mark(setPhone)(e.target.value)}
-                  placeholder="(555) 555-5555"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label htmlFor="linkedin" className={labelCls}>
-                  LinkedIn URL *
-                </label>
-                <input
-                  id="linkedin"
-                  value={linkedinUrl}
-                  onChange={(e) => mark(setLinkedinUrl)(e.target.value)}
-                  placeholder="https://linkedin.com/in/janedoe"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label htmlFor="email" className={labelCls}>
-                  Email
-                </label>
-                <input
-                  id="email"
-                  value={email}
-                  onChange={(e) => mark(setEmail)(e.target.value)}
-                  placeholder="jane@example.com"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label htmlFor="website" className={labelCls}>
-                  Website / portfolio
-                </label>
-                <input
-                  id="website"
-                  value={website}
-                  onChange={(e) => mark(setWebsite)(e.target.value)}
-                  placeholder="https://janedoe.com"
-                  className={inputCls}
-                />
+                <p className={labelCls}>Add to Claude Code</p>
+                <pre className="overflow-x-auto rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs leading-relaxed text-slate-300">
+                  <code>{mcpAddCommand}</code>
+                </pre>
               </div>
             </div>
-            <p className="mt-3 text-xs text-slate-500">
-              * always included in generated resumes
-            </p>
-          </section>
-
-          {/* Master resume editor */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-            <h2 className="text-base font-semibold text-slate-100">
-              Master Resume
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Your complete resume in Markdown — every role, dates, and what
-              you did. It doesn&apos;t need to be polished: the sections below
-              let you add the good material (numbers, wins, skills) separately,
-              and the generator combines everything.
-            </p>
-            <textarea
-              id="master-resume"
-              value={masterResume}
-              onChange={(e) => mark(setMasterResume)(e.target.value)}
-              placeholder={
-                "## Experience\n\n### Account Executive — Acme Corp (2021–present)\n- Owned full sales cycle for mid-market accounts…\n\n### SDR — Beta Inc (2019–2021)\n- …\n\n## Education\n…"
-              }
-              className={`${textareaCls} mt-4 min-h-[400px]`}
-            />
-          </section>
-
-          {/* Career highlights */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-            <h2 className="text-base font-semibold text-slate-100">
-              Career Highlights &amp; Numbers
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Achievements with concrete numbers, even rough ones: quota
-              attainment, revenue closed, deals won, pipeline generated, teams
-              led, rankings. The generator leans on these to make every bullet
-              achievement-focused — list things here even if they&apos;re not in
-              the resume above.
-            </p>
-            <textarea
-              value={highlights}
-              onChange={(e) => mark(setHighlights)(e.target.value)}
-              placeholder={
-                "- 137% of quota FY2025 ($1.4M closed against $1.02M target)\n- #2 AE of 14 two quarters running\n- Sourced 60% of own pipeline; avg deal size $85K\n- Landed 3 logos >1,000 employees, incl. first Fortune 500 customer"
-              }
-              className={`${textareaCls} mt-4 min-h-[160px]`}
-            />
-          </section>
-
-          {/* Skills & tools */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-            <h2 className="text-base font-semibold text-slate-100">
-              Skills &amp; Tools
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Software, methodologies, certifications, languages. Per your
-              rules, a Skills &amp; Tools section is only included in the
-              generated resume when the job is technical — but keeping the list
-              current helps tailoring either way.
-            </p>
-            <textarea
-              value={skills}
-              onChange={(e) => mark(setSkills)(e.target.value)}
-              placeholder={
-                "Salesforce, HubSpot, Outreach, Gong, LinkedIn Sales Navigator, SQL (basic), MEDDIC, Challenger"
-              }
-              className={`${textareaCls} mt-4 min-h-[100px]`}
-            />
-          </section>
-
-          {/* Extra context */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-            <h2 className="text-base font-semibold text-slate-100">
-              Extra Context
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Anything else the generator should know: preferences (tone,
-              length), industries you know well, visa/work authorization,
-              stories behind career moves, things to avoid mentioning.
-            </p>
-            <textarea
-              value={extraContext}
-              onChange={(e) => mark(setExtraContext)(e.target.value)}
-              placeholder={
-                "Prefer concise one-page resumes. Deep fintech and crypto network. Don't highlight the 2019 gap — covered by consulting work."
-              }
-              className={`${textareaCls} mt-4 min-h-[120px]`}
-            />
           </section>
         </div>
       )}

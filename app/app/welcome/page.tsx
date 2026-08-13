@@ -321,13 +321,14 @@ export default function WelcomePage() {
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
                     Add your master resume, contact info, and career highlights
-                    in Settings — the generator tailors them to every job.
+                    on your Profile page — the generator tailors them to every
+                    job.
                   </p>
                   <Link
-                    href="/settings"
+                    href="/profile"
                     className="mt-3 inline-block rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
                   >
-                    Open Settings →
+                    Open Profile →
                   </Link>
                 </div>
               </div>
@@ -385,7 +386,8 @@ export default function WelcomePage() {
               </button>
             </div>
             <p className="text-center text-xs text-slate-500">
-              You can change all of this later in Settings.
+              You can change all of this later on the Profile and Settings
+              pages.
             </p>
           </div>
         )}

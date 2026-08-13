@@ -58,7 +58,7 @@ const TYPE_META: Record<
     title: "Tailored Resumes",
     generateLabel: "Generate Tailored Resume",
     empty:
-      "No resumes generated yet. Generation tailors your master resume (from Settings) to this job description.",
+      "No resumes generated yet. Generation tailors your master resume (from your Profile) to this job description.",
   },
   cover_letter: {
     title: "Cover Letters",

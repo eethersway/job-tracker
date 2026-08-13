@@ -50,6 +50,19 @@ supabase/functions/   Edge functions: capture-job, research-company, generate-do
 
 Costs: Supabase and Vercel free tiers are enough for personal use. AI usage is billed to each user's own Anthropic API key (roughly a few cents per job for research + resume + cover letter).
 
+## MCP / API access
+
+JobTracker ships an MCP server so any MCP-capable LLM client (Claude Code, Claude Desktop, Cursor, ...) can read and update your tracker.
+
+- Endpoint: `https://awebariljrravthdzujq.supabase.co/functions/v1/mcp` (Streamable HTTP)
+- Auth: `Authorization: Bearer <API token>` — copy your API token from the Settings page (regenerate it there any time)
+- Example (Claude Code):
+  ```bash
+  claude mcp add jobtracker --transport http https://awebariljrravthdzujq.supabase.co/functions/v1/mcp --header "Authorization: Bearer <token>"
+  ```
+- Tools: `list_applications`, `get_application`, `get_document`, `add_application`, `update_application`, `get_profile`, `get_stats`
+- All access is read/write scoped to your own account: the API token maps to your user and every query is filtered to your data. Secrets (API keys, tokens, credit balance) are never exposed through MCP.
+
 ## Security notes
 
 - All data tables use row-level security keyed to the authenticated user; users can only ever read/write their own rows.
