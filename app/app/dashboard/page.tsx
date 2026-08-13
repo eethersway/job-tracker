@@ -74,7 +74,9 @@ export default function DashboardPage() {
         const supabase = createClient();
         const { data, error } = await supabase
           .from("profile")
-          .select("*")
+          .select(
+            "anthropic_api_key, master_resume_md, credits_cents, onboarding_dismissed"
+          )
           .maybeSingle();
         if (error) throw new Error(error.message);
         const profile = (data as Profile | null) ?? null;
@@ -300,8 +302,9 @@ export default function DashboardPage() {
             No applications yet
           </h2>
           <p className="mx-auto mt-1 max-w-md text-sm text-slate-400">
-            Track your first job application by adding it manually, or install
-            the Chrome extension to capture postings straight from job boards.
+            The easiest way to start: click Add Application and paste a job
+            posting link, and we fill in the details for you. You can also
+            enter one by hand or install the Chrome extension.
           </p>
           <div className="mt-5 flex justify-center gap-3">
             <button

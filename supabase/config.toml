@@ -1,0 +1,35 @@
+# Supabase CLI configuration.
+# Keeps per-function JWT settings in version control so a redeploy can never
+# silently flip a webhook or token-authenticated endpoint back to JWT-only
+# (or, worse, expose a JWT-only endpoint without auth).
+project_id = "awebariljrravthdzujq"
+
+# --- Edge functions -------------------------------------------------------
+# verify_jwt = false means the function does its own authentication:
+#   capture-job    per-user capture token in the x-capture-token header
+#   stripe-webhook Stripe-Signature HMAC against STRIPE_WEBHOOK_SECRET
+#   mcp            per-user API token in the Authorization header
+
+[functions.capture-job]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.mcp]
+verify_jwt = false
+
+[functions.import-url]
+verify_jwt = true
+
+[functions.research-company]
+verify_jwt = true
+
+[functions.generate-document]
+verify_jwt = true
+
+[functions.create-checkout]
+verify_jwt = true
+
+[functions.x402-topup]
+verify_jwt = true

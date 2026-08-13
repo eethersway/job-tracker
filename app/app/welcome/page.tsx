@@ -8,13 +8,13 @@ import { AppShell } from "@/components/AppShell";
 import { ExtensionSteps } from "@/components/ExtensionSteps";
 import { LoadingBlock, Spinner } from "@/components/Spinner";
 import { useToast } from "@/components/Toast";
+import { buildBookmarklet } from "@/lib/extract-page";
 import {
   COVER_LETTER_PRICE_CENTS,
   RESEARCH_PRICE_CENTS,
   RESUME_PRICE_CENTS,
   formatCents,
 } from "@/lib/pricing";
-import { generateCaptureToken } from "@/lib/token";
 import type { Profile } from "@/lib/types";
 
 const inputCls =
@@ -53,6 +53,9 @@ export default function WelcomePage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
+  // Computed after mount: depends on window.location (SSR-safe).
+  const [bookmarkletHref, setBookmarkletHref] = useState<string | null>(null);
+
   const [keyDraft, setKeyDraft] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
@@ -71,13 +74,15 @@ export default function WelcomePage() {
       if (error) throw new Error(error.message);
       let p = (data as Profile | null) ?? null;
 
-      if (!p || !p.capture_token) {
+      // Ensure the profile row exists. capture_token is server-issued (the
+      // column is not writable by the client), so it is never part of this
+      // payload — we mint one with the rotate RPC instead.
+      if (!p) {
         const { data: upserted, error: upsertError } = await supabase
           .from("profile")
           .upsert(
             {
               user_id: userId,
-              capture_token: p?.capture_token ?? generateCaptureToken(),
               updated_at: new Date().toISOString(),
             },
             { onConflict: "user_id" }
@@ -86,6 +91,15 @@ export default function WelcomePage() {
           .maybeSingle();
         if (upsertError) throw new Error(upsertError.message);
         p = (upserted as Profile | null) ?? p;
+      }
+
+      if (p && !p.capture_token) {
+        const { data: fresh, error: rotateError } = await supabase.rpc(
+          "rotate_capture_token"
+        );
+        if (!rotateError && typeof fresh === "string" && fresh) {
+          p = { ...p, capture_token: fresh };
+        }
       }
 
       setProfile(p);
@@ -102,6 +116,14 @@ export default function WelcomePage() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    try {
+      setBookmarkletHref(buildBookmarklet(window.location.origin));
+    } catch {
+      // Leave it null; the card shows a fallback note instead.
+    }
+  }, []);
 
   async function saveApiKey() {
     const key = keyDraft.trim();
@@ -180,7 +202,7 @@ export default function WelcomePage() {
       <div className="mx-auto max-w-2xl">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-slate-100">
-            Welcome to JobTracker 👋
+            Welcome to StrongerApplicant 👋
           </h1>
           <p className="mt-2 text-sm text-slate-400">
             Three quick steps and you&apos;re ready to capture jobs, research
@@ -334,17 +356,52 @@ export default function WelcomePage() {
               </div>
             </section>
 
-            {/* Step 3: extension */}
+            {/* Step 3: adding jobs (link import first, extension second) */}
             <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
               <div className="flex items-start gap-4">
                 <StepBadge n={3} done={false} />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold text-slate-100">
-                    Install the Chrome extension
+                    Start adding jobs
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Capture job postings from any job board straight into your
-                    tracker.
+                    Nothing to install. Pick whichever way suits you.
+                  </p>
+
+                  <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
+                    <h3 className="text-sm font-semibold text-slate-100">
+                      Add jobs by pasting a link
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                      The simplest way to start. On the dashboard, click{" "}
+                      <span className="font-medium text-slate-300">
+                        + Add Application
+                      </span>{" "}
+                      and paste the job posting URL. We read the posting and
+                      fill in the company, title, location, and description for
+                      you to review.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Works with LinkedIn, Greenhouse, Lever, Ashby, and
+                      Workday. A few sites (Indeed, for example) block
+                      automated reads, so you may need to paste the description
+                      yourself.
+                    </p>
+                    <Link
+                      href="/dashboard"
+                      className="mt-3 inline-block rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 transition hover:bg-sky-500/20"
+                    >
+                      Go to the dashboard →
+                    </Link>
+                  </div>
+
+                  <h3 className="mt-5 text-sm font-semibold text-slate-100">
+                    Or install the Chrome extension
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Saves a posting in one click from any job board, including
+                    sites that block the other methods. Best if you apply in
+                    volume.
                   </p>
                   {captureToken && (
                     <div className="mt-3">
@@ -371,6 +428,42 @@ export default function WelcomePage() {
                   <div className="mt-3">
                     <ExtensionSteps />
                   </div>
+
+                  {/* De-emphasized third option */}
+                  <details className="mt-5 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                    <summary className="cursor-pointer text-xs text-slate-400 transition hover:text-slate-200">
+                      Also: quick-capture bookmarklet (works on most boards,
+                      not LinkedIn)
+                    </summary>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                      Drag this button to your bookmarks bar, then click it on
+                      a job posting. LinkedIn blocks bookmarklets, so use link
+                      import or the extension there.
+                    </p>
+                    <div className="mt-2">
+                      {bookmarkletHref ? (
+                        <a
+                          href={bookmarkletHref}
+                          draggable
+                          onClick={(e) => {
+                            e.preventDefault();
+                            showToast(
+                              "Drag this button to your bookmarks bar instead of clicking it.",
+                              "info"
+                            );
+                          }}
+                          className="inline-flex cursor-grab items-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800 active:cursor-grabbing"
+                          title="Drag me to your bookmarks bar"
+                        >
+                          Save to StrongerApplicant
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-500">
+                          Preparing the bookmarklet…
+                        </span>
+                      )}
+                    </div>
+                  </details>
                 </div>
               </div>
             </section>

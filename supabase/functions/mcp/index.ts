@@ -350,6 +350,24 @@ async function handleMessage(
       const name = (params as { name?: string }).name;
       const args = ((params as { arguments?: Record<string, unknown> }).arguments ?? {}) as Record<string, unknown>;
       if (!name) return rpcError(id, -32602, "tools/call requires params.name");
+      // Rate limit the tool calls (the part that touches data). The protocol
+      // handshake (initialize / tools/list) is deliberately not counted, since
+      // clients re-run it on every reconnect. Fails OPEN on a check error.
+      try {
+        const { data: allowed, error: rlErr } = await supabase.rpc("check_rate_limit", {
+          p_user_id: uid,
+          p_bucket: "mcp",
+          p_max: 300,
+          p_window_seconds: 3600,
+        });
+        if (rlErr) {
+          console.error(`mcp: rate limit check failed: ${rlErr.message}`);
+        } else if (allowed === false) {
+          return rpcResult(id, toolErr("You are going too fast. Try again in a minute."));
+        }
+      } catch (e) {
+        console.error(`mcp: rate limit check threw: ${String((e as Error)?.message ?? e)}`);
+      }
       try {
         return rpcResult(id, await callTool(supabase, uid, name, args));
       } catch (e) {

@@ -48,6 +48,8 @@ interface DocumentsPanelProps {
    * generation runs it first when it hasn't, which costs extra on credits.
    */
   researchDone?: boolean;
+  /** Account on hold: generation is blocked until it is restored. */
+  suspended?: boolean;
 }
 
 const TYPE_META: Record<
@@ -78,6 +80,7 @@ export function DocumentsPanel({
   onApplicationChanged,
   hasApiKey = null,
   researchDone = false,
+  suspended = false,
 }: DocumentsPanelProps) {
   const { showToast } = useToast();
   const meta = TYPE_META[type];
@@ -135,6 +138,9 @@ export function DocumentsPanel({
           }. Top up on the Billing page.`,
           "error"
         );
+      } else if (result.rateLimited) {
+        // Surface the server's own throttling message.
+        h.showToast(result.error ?? "Too many requests. Try again shortly.", "error");
       } else {
         h.showToast(
           `Generation failed: ${result.error ?? "unknown error"}`,
@@ -161,6 +167,7 @@ export function DocumentsPanel({
   }, [selected?.id]);
 
   function generate() {
+    if (suspended) return;
     setInsufficientCredits(false);
     startGeneration(applicationId, type);
   }
@@ -208,7 +215,7 @@ export function DocumentsPanel({
       .replace(/^-+|-+$/g, "");
     const date = new Date(selected.created_at).toISOString().slice(0, 10);
     const filename = `${type === "resume" ? "resume" : "cover-letter"}-${
-      slug || "jobtracker"
+      slug || "strongerapplicant"
     }-${date}.md`;
     const blob = new Blob([selected.content_md], {
       type: "text/markdown;charset=utf-8",
@@ -259,7 +266,12 @@ export function DocumentsPanel({
             ))}
           <button
             onClick={generate}
-            disabled={generating}
+            disabled={generating || suspended}
+            title={
+              suspended
+                ? "Your account is on hold, so generation is paused."
+                : undefined
+            }
             className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-60"
           >
             {generating && <Spinner className="h-4 w-4" />}
@@ -269,6 +281,13 @@ export function DocumentsPanel({
           </button>
         </div>
       </div>
+
+      {suspended && (
+        <p className="rounded-xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          Generation is paused while your account is on hold. Your existing
+          documents stay available.
+        </p>
+      )}
 
       {insufficientCredits && (
         <div

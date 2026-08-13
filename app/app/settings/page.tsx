@@ -7,8 +7,8 @@ import { AppShell } from "@/components/AppShell";
 import { LoadingBlock, Spinner } from "@/components/Spinner";
 import { useToast } from "@/components/Toast";
 import { ExtensionSteps, FUNCTIONS_BASE_URL } from "@/components/ExtensionSteps";
+import { buildBookmarklet } from "@/lib/extract-page";
 import { formatDateTime } from "@/lib/format";
-import { generateCaptureToken } from "@/lib/token";
 import type { Profile } from "@/lib/types";
 
 const inputCls =
@@ -38,6 +38,18 @@ export default function SettingsPage() {
   const [apiToken, setApiToken] = useState<string | null>(null);
   const [regeneratingApiToken, setRegeneratingApiToken] = useState(false);
 
+  // Bookmarklet href depends on window.location, so it is computed after
+  // mount to avoid an SSR/client hydration mismatch.
+  const [bookmarkletHref, setBookmarkletHref] = useState<string | null>(null);
+
+  // Account (password change) — independent of the page's main Save.
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -55,6 +67,22 @@ export default function SettingsPage() {
       setAnthropicKey(p?.anthropic_api_key ?? "");
       setCaptureToken(p?.capture_token ?? null);
       setApiToken(p?.api_token ?? null);
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        setAccountEmail(userData.user?.email ?? null);
+      } catch {
+        // Email is display-only context — missing it shouldn't fail the page.
+      }
+      // Tokens are server-issued now: mint any that are still missing via
+      // the rotate RPCs (the columns are not writable by the client).
+      if (p && !p.capture_token) {
+        const { data: fresh } = await supabase.rpc("rotate_capture_token");
+        if (typeof fresh === "string" && fresh) setCaptureToken(fresh);
+      }
+      if (p && !p.api_token) {
+        const { data: fresh } = await supabase.rpc("rotate_api_token");
+        if (typeof fresh === "string" && fresh) setApiToken(fresh);
+      }
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : "Failed to load settings."
@@ -68,30 +96,43 @@ export default function SettingsPage() {
     void fetchProfile();
   }, [fetchProfile]);
 
+  useEffect(() => {
+    try {
+      setBookmarkletHref(buildBookmarklet(window.location.origin));
+    } catch {
+      // Leave it null; the card shows a fallback note instead.
+    }
+  }, []);
+
   async function handleSave() {
     setSaving(true);
     try {
       const supabase = createClient();
       const userId = (await supabase.auth.getUser()).data.user!.id;
-      // Auto-generate tokens on first save if none exist yet.
-      const token = captureToken ?? generateCaptureToken();
-      const mcpToken = apiToken ?? generateCaptureToken();
-      // Only the fields this page owns — never resume/contact content
-      // (that belongs to the Profile page).
+      // capture_token and api_token are NOT writable by the client any more
+      // (server-issued via the rotate RPCs), so they must stay out of this
+      // payload or the upsert is rejected. Resume/contact content belongs to
+      // the Profile page, so it stays out too.
       const row = {
         user_id: userId,
         anthropic_api_key: anthropicKey.trim() || null,
-        capture_token: token,
-        api_token: mcpToken,
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
         .from("profile")
         .upsert(row, { onConflict: "user_id" });
       if (error) throw new Error(error.message);
-      setCaptureToken(token);
-      setApiToken(mcpToken);
       setProfile((prev) => (prev ? { ...prev, ...row } : prev));
+
+      // Mint tokens server-side if this profile still has none.
+      if (!captureToken) {
+        const { data: fresh } = await supabase.rpc("rotate_capture_token");
+        if (typeof fresh === "string" && fresh) setCaptureToken(fresh);
+      }
+      if (!apiToken) {
+        const { data: fresh } = await supabase.rpc("rotate_api_token");
+        if (typeof fresh === "string" && fresh) setApiToken(fresh);
+      }
       setDirty(false);
       showToast("Settings saved.", "success");
     } catch (err) {
@@ -120,17 +161,11 @@ export default function SettingsPage() {
     setRegenerating(true);
     try {
       const supabase = createClient();
-      const userId = (await supabase.auth.getUser()).data.user!.id;
-      const token = generateCaptureToken();
-      const { error } = await supabase.from("profile").upsert(
-        {
-          user_id: userId,
-          capture_token: token,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
+      // Server-issued: the column is not writable by the client.
+      const { data, error } = await supabase.rpc("rotate_capture_token");
       if (error) throw new Error(error.message);
+      const token = typeof data === "string" ? data : "";
+      if (!token) throw new Error("The server did not return a new token.");
       setCaptureToken(token);
       showToast(
         "New capture token saved — update it in the extension Options too.",
@@ -162,17 +197,11 @@ export default function SettingsPage() {
     setRegeneratingApiToken(true);
     try {
       const supabase = createClient();
-      const userId = (await supabase.auth.getUser()).data.user!.id;
-      const token = generateCaptureToken();
-      const { error } = await supabase.from("profile").upsert(
-        {
-          user_id: userId,
-          api_token: token,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
+      // Server-issued: the column is not writable by the client.
+      const { data, error } = await supabase.rpc("rotate_api_token");
       if (error) throw new Error(error.message);
+      const token = typeof data === "string" ? data : "";
+      if (!token) throw new Error("The server did not return a new token.");
       setApiToken(token);
       showToast(
         "New API token saved — update it in any connected LLM clients too.",
@@ -190,7 +219,60 @@ export default function SettingsPage() {
     }
   }
 
-  const mcpAddCommand = `claude mcp add jobtracker --transport http ${MCP_ENDPOINT_URL} --header "Authorization: Bearer ${
+  async function updatePassword() {
+    setPasswordError(null);
+    if (!currentPassword) {
+      setPasswordError("Enter your current password.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("Passwords do not match.");
+      return;
+    }
+    if (!accountEmail) {
+      setPasswordError(
+        "Could not confirm which account you are signed in as. Reload and try again."
+      );
+      return;
+    }
+    setUpdatingPassword(true);
+    try {
+      const supabase = createClient();
+      // Re-authenticate first so a hijacked session cannot silently change
+      // the password and lock the real owner out.
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email: accountEmail,
+        password: currentPassword,
+      });
+      if (reauthError) {
+        setPasswordError("Current password is incorrect.");
+        return;
+      }
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (error) throw new Error(error.message);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      showToast("Password updated.", "success");
+    } catch (err) {
+      showToast(
+        `Could not update password: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+        "error"
+      );
+    } finally {
+      setUpdatingPassword(false);
+    }
+  }
+
+  const mcpAddCommand = `claude mcp add strongerapplicant --transport http ${MCP_ENDPOINT_URL} --header "Authorization: Bearer ${
     apiToken ?? "<token>"
   }"`;
 
@@ -352,6 +434,77 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Quick capture bookmarklet (third-choice capture method) */}
+          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
+            <h2 className="text-base font-semibold text-slate-100">
+              Quick capture bookmarklet
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-400">
+              Drag the button below to your bookmarks bar, then click it on any
+              job posting to save it. A small window opens with the details
+              filled in for you to review.
+            </p>
+            <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+              Works on most job boards. LinkedIn blocks bookmarklets, so use
+              link import or the extension there.
+            </p>
+
+            <div className="mt-4">
+              {bookmarkletHref ? (
+                <a
+                  href={bookmarkletHref}
+                  draggable
+                  onClick={(e) => {
+                    e.preventDefault();
+                    showToast(
+                      "Drag this button to your bookmarks bar instead of clicking it.",
+                      "info"
+                    );
+                  }}
+                  className="inline-flex cursor-grab items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-300 transition hover:bg-sky-500/20 active:cursor-grabbing"
+                  title="Drag me to your bookmarks bar"
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v13.5a.5.5 0 01-.8.4L10 14.75 5.8 17.9a.5.5 0 01-.8-.4V4z" />
+                  </svg>
+                  Save to StrongerApplicant
+                </a>
+              ) : (
+                <span className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-500">
+                  Preparing the bookmarklet…
+                </span>
+              )}
+            </div>
+
+            <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-sm text-slate-300">
+              <li>
+                Show your bookmarks bar (
+                <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">
+                  Cmd+Shift+B
+                </code>{" "}
+                on macOS,{" "}
+                <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">
+                  Ctrl+Shift+B
+                </code>{" "}
+                on Windows and Linux).
+              </li>
+              <li>Drag the button above up to it.</li>
+              <li>Open a job posting and click the bookmark.</li>
+              <li>Review the details and save.</li>
+            </ol>
+
+            <p className="mt-3 text-xs text-slate-500">
+              Works in Chrome, Edge, and Firefox on desktop. To add a job
+              without any setup, paste its link into + Add Application on the
+              dashboard.
+            </p>
+          </section>
+
           {/* LLM / MCP access */}
           <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
             <h2 className="text-base font-semibold text-slate-100">
@@ -429,6 +582,97 @@ export default function SettingsPage() {
                   <code>{mcpAddCommand}</code>
                 </pre>
               </div>
+            </div>
+          </section>
+
+          {/* Account */}
+          <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-6">
+            <h2 className="text-base font-semibold text-slate-100">Account</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-400">
+              Change the password you use to sign in.
+            </p>
+
+            <div className="mt-4 max-w-xl space-y-4">
+              <div>
+                <label htmlFor="account-email" className={labelCls}>
+                  Signed in as
+                </label>
+                <input
+                  id="account-email"
+                  readOnly
+                  value={accountEmail ?? ""}
+                  placeholder="—"
+                  className={`${inputCls} text-slate-400`}
+                />
+              </div>
+              <div>
+                <label htmlFor="current-password" className={labelCls}>
+                  Current password
+                </label>
+                <input
+                  id="current-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className={inputCls}
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="new-password" className={labelCls}>
+                    New password
+                  </label>
+                  <input
+                    id="new-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="confirm-new-password" className={labelCls}>
+                    Confirm new password
+                  </label>
+                  <input
+                    id="confirm-new-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              {passwordError && (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-300"
+                >
+                  {passwordError}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void updatePassword()}
+                disabled={updatingPassword}
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
+              >
+                {updatingPassword && <Spinner className="h-3.5 w-3.5" />}
+                {updatingPassword ? "Updating…" : "Update password"}
+              </button>
+              <p className="text-xs text-slate-500">
+                At least 8 characters. We confirm your current password first.
+                Updates immediately — no need to press the page&apos;s Save
+                button.
+              </p>
             </div>
           </section>
         </div>

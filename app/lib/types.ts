@@ -1,5 +1,5 @@
 /**
- * TypeScript types mirroring the JobTracker Supabase schema.
+ * TypeScript types mirroring the StrongerApplicant Supabase schema.
  * Keep these in sync with the database migrations.
  */
 
@@ -85,6 +85,9 @@ export interface Profile {
   onboarding_dismissed: boolean;
   /** Pay-as-you-go credit balance in US cents (unused when a key is set). */
   credits_cents: number;
+  /** True when the account is on hold (e.g. a payment was reversed). */
+  suspended: boolean;
+  suspended_reason: string | null;
   updated_at: string;
 }
 
@@ -125,6 +128,62 @@ export interface NewApplication {
 export interface ResearchCompanyResponse {
   ok: boolean;
   company_id?: string;
+  error?: string;
+}
+
+/**
+ * Payload scraped by the Quick capture bookmarklet and handed to the
+ * /capture popup via postMessage. Treat every field as UNTRUSTED data: it
+ * comes from an arbitrary job page, so only ever render it into form input
+ * values, never as HTML or markdown.
+ */
+export interface CapturePayload {
+  company?: unknown;
+  title?: unknown;
+  location?: unknown;
+  salary?: unknown;
+  description?: unknown;
+  url?: unknown;
+}
+
+/** Message the popup posts to its opener once it is listening. */
+export interface CaptureReadyMessage {
+  type: "sa_capture_ready";
+}
+
+/** Message the bookmarklet posts to the popup with the scraped page. */
+export interface CapturePayloadMessage {
+  type: "sa_capture_payload";
+  payload: CapturePayload;
+}
+
+/** Fields the import-url edge function can extract from a job posting. */
+export interface ImportUrlFields {
+  company_name?: string | null;
+  job_title?: string | null;
+  location?: string | null;
+  salary?: string | null;
+  job_description?: string | null;
+  job_url?: string | null;
+}
+
+/**
+ * Response shape of the import-url edge function. It never inserts anything;
+ * it only returns fields to prefill the add-application form.
+ * 200 -> { ok: true, partial, note, fields }
+ * 422 -> { ok: false, blocked?, error } (site blocked it / unreadable page)
+ * 400 -> { ok: false, error } (invalid or disallowed URL)
+ */
+export interface ImportUrlResponse {
+  ok: boolean;
+  /** True when only some fields could be read (see `note`). */
+  partial?: boolean;
+  /** Human-readable hint shown to the user when the import is partial. */
+  note?: string;
+  fields?: ImportUrlFields;
+  /** True when the target site actively blocked the automated read. */
+  blocked?: boolean;
+  /** User-facing error text (already explains the fallback). */
   error?: string;
 }
 

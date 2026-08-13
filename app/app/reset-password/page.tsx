@@ -1,31 +1,71 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/Spinner";
-import { isSupabaseConfigured } from "@/lib/env";
+import { useToast } from "@/components/Toast";
 
-export default function SignupPage() {
+type PageState = "verifying" | "ready" | "invalid";
+
+/**
+ * Password recovery landing page (public). The reset email links here —
+ * either with a ?code= param (PKCE flow, exchanged for a session below) or
+ * with tokens in the URL hash (implicit flow, picked up automatically by
+ * supabase-js). Once a session exists the user can set a new password.
+ */
+export default function ResetPasswordPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const { showToast } = useToast();
+
+  const [pageState, setPageState] = useState<PageState>("verifying");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function establishSession() {
+      try {
+        const supabase = createClient();
+
+        // PKCE flow: exchange the ?code= from the email link for a session.
+        const code = new URLSearchParams(window.location.search).get("code");
+        if (code) {
+          try {
+            const { error: exchangeError } =
+              await supabase.auth.exchangeCodeForSession(code);
+            if (!exchangeError) {
+              if (!cancelled) setPageState("ready");
+              return;
+            }
+          } catch {
+            // Fall through to the session check below.
+          }
+        }
+
+        // Implicit flow (hash tokens, auto-detected by supabase-js) or an
+        // already-signed-in user changing their password via this page.
+        const { data } = await supabase.auth.getSession();
+        if (!cancelled) setPageState(data.session ? "ready" : "invalid");
+      } catch {
+        if (!cancelled) setPageState("invalid");
+      }
+    }
+    void establishSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    if (!email.trim() || !password || !confirm) {
-      setError("Please fill in every field.");
-      return;
-    }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
     if (password !== confirm) {
@@ -33,32 +73,23 @@ export default function SignupPage() {
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
     try {
       const supabase = createClient();
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim(),
+      const { error: updateError } = await supabase.auth.updateUser({
         password,
       });
-      if (signUpError) {
-        setError(signUpError.message);
+      if (updateError) {
+        setError(updateError.message);
         return;
       }
-      if (data.session) {
-        // Email confirmation disabled — user is signed in right away.
-        router.push("/dashboard");
-        router.refresh();
-        return;
-      }
-      setAwaitingConfirmation(true);
+      showToast("Password updated.", "success");
+      router.push("/dashboard");
+      router.refresh();
     } catch {
-      setError(
-        isSupabaseConfigured()
-          ? "Could not reach the server. Check your connection and try again."
-          : "Supabase is not configured yet — set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local."
-      );
+      setError("Could not update your password. Please try again.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
@@ -77,22 +108,23 @@ export default function SignupPage() {
             <h1 className="text-xl font-semibold tracking-tight text-slate-100">
               Stronger<span className="text-sky-400">Applicant</span>
             </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Create your job application tracker account
-            </p>
+            <p className="mt-1 text-sm text-slate-400">Set a new password</p>
           </div>
         </div>
 
-        {awaitingConfirmation ? (
+        {pageState === "verifying" ? (
+          <div className="flex items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-slate-400 shadow-xl">
+            <Spinner className="h-4 w-4" />
+            <span className="text-sm">Verifying reset link…</span>
+          </div>
+        ) : pageState === "invalid" ? (
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center shadow-xl">
-            <p className="text-2xl">📬</p>
+            <p className="text-2xl">⚠️</p>
             <h2 className="mt-3 text-base font-semibold text-slate-100">
-              Check your email
+              This reset link is invalid or expired
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">
-              We sent a confirmation link to{" "}
-              <span className="font-medium text-slate-200">{email.trim()}</span>
-              . Click it to activate your account, then sign in.
+              Request a new reset link from the sign-in page and try again.
             </p>
             <Link
               href="/login"
@@ -108,25 +140,11 @@ export default function SignupPage() {
           >
             <div className="space-y-4">
               <div>
-                <label htmlFor="email" className={labelCls}>
-                  Email
+                <label htmlFor="new-password" className={labelCls}>
+                  New password
                 </label>
                 <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className={inputCls}
-                  placeholder="you@example.com"
-                />
-              </div>
-              <div>
-                <label htmlFor="password" className={labelCls}>
-                  Password
-                </label>
-                <input
-                  id="password"
+                  id="new-password"
                   type="password"
                   autoComplete="new-password"
                   value={password}
@@ -137,7 +155,7 @@ export default function SignupPage() {
               </div>
               <div>
                 <label htmlFor="confirm-password" className={labelCls}>
-                  Confirm password
+                  Confirm new password
                 </label>
                 <input
                   id="confirm-password"
@@ -161,18 +179,18 @@ export default function SignupPage() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={saving}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
               >
-                {loading && <Spinner className="h-4 w-4" />}
-                {loading ? "Creating account…" : "Create account"}
+                {saving && <Spinner className="h-4 w-4" />}
+                {saving ? "Updating…" : "Update password"}
               </button>
             </div>
           </form>
         )}
 
         <p className="mt-6 text-center text-xs text-slate-500">
-          Already have an account?{" "}
+          Remembered it after all?{" "}
           <Link
             href="/login"
             className="text-sky-400 underline-offset-2 hover:underline"

@@ -38,6 +38,23 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
     if (!owner) return json({ ok: false, error: "Invalid capture token - check the extension Options page against Settings in the app" }, 401);
 
+    // Rate limit per user. Fails OPEN so a database hiccup does not block capture.
+    try {
+      const { data: allowed, error: rlErr } = await supabase.rpc("check_rate_limit", {
+        p_user_id: owner.user_id,
+        p_bucket: "capture",
+        p_max: 100,
+        p_window_seconds: 3600,
+      });
+      if (rlErr) {
+        console.error(`capture-job: rate limit check failed: ${rlErr.message}`);
+      } else if (allowed === false) {
+        return json({ ok: false, error: "You are going too fast. Try again in a minute." }, 429);
+      }
+    } catch (e) {
+      console.error(`capture-job: rate limit check threw: ${String((e as Error)?.message ?? e)}`);
+    }
+
     const body = await req.json();
     const company_name = str(body.company_name);
     const job_title = str(body.job_title);

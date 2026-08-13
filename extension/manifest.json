@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "JobTracker Capture",
+  "name": "StrongerApplicant Capture",
   "version": "1.0.0",
   "description": "Capture job postings from any site and save them to your self-hosted job tracker.",
   "permissions": ["activeTab", "scripting", "storage"],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Save this job to JobTracker",
+    "default_title": "Save this job to StrongerApplicant",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

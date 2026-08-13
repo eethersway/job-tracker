@@ -1,5 +1,5 @@
 /**
- * JobTracker Capture — page extraction script.
+ * StrongerApplicant Capture — page extraction script.
  * Injected into the active tab via chrome.scripting.executeScript.
  * Returns a plain object: { company, title, location, salary, description, url }.
  *
@@ -281,11 +281,22 @@
 
   const findAnchorHeading = () => {
     try {
-      const els = document.querySelectorAll("h1,h2,h3,h4,strong,b");
-      for (const el of els) {
-        if (el.childElementCount > 1) continue;
-        const t = clean(el.textContent).toLowerCase();
-        if (t && ANCHOR_HEADINGS.includes(t)) return el;
+      // Headings first (cheap, few nodes). Only fall back to strong/b, which
+      // can number in the thousands on a busy page, if no heading matched.
+      const groups = ["h1,h2,h3,h4", "strong,b"];
+      for (const sel of groups) {
+        const els = document.querySelectorAll(sel);
+        // Guard against pathological pages: scanning 2k+ nodes is not worth it.
+        const limit = Math.min(els.length, 600);
+        for (let i = 0; i < limit; i++) {
+          const el = els[i];
+          if (el.childElementCount > 1) continue;
+          const raw = el.textContent;
+          // Length check before clean() avoids normalizing huge strings.
+          if (!raw || raw.length > 40) continue;
+          const t = clean(raw).toLowerCase();
+          if (t && ANCHOR_HEADINGS.includes(t)) return el;
+        }
       }
     } catch (e) {
       /* ignore */
@@ -324,10 +335,12 @@
         desc += (sib.innerText || sib.textContent || "") + "\n";
         sib = sib.nextElementSibling;
       }
+      // Widen only while the text is too short. Each innerText read forces a
+      // layout pass, so cap the hops tightly and stop as soon as it is enough.
       let container = h.parentElement;
       let hops = 0;
       const headingText = clean(h.textContent);
-      while (clean(desc).length < 200 && container && container !== document.body && hops < 4) {
+      while (clean(desc).length < 200 && container && container !== document.body && hops < 2) {
         const t = container.innerText || "";
         const idx = t.indexOf(headingText);
         desc = idx >= 0 ? t.slice(idx + headingText.length) : t;
@@ -418,18 +431,26 @@
   };
 
   // ---------- 3. Generic fallback ----------
-  const fromGeneric = () => {
+  // `needDescription` gates the expensive whole-page innerText read: reading
+  // innerText forces a full synchronous layout, which is very slow on large
+  // pages (LinkedIn especially). Only pay that cost when nothing cheaper
+  // produced a description.
+  const fromGeneric = (needDescription) => {
     const out = {};
     try {
       out.title = textOf("h1") || metaContent("og:title") || clean(document.title);
       out.company = metaContent("og:site_name");
-      const mainEl =
-        document.querySelector("main") ||
-        document.querySelector("article") ||
-        document.querySelector('[role="main"]') ||
-        document.body;
-      const mainText = mainEl ? cleanBlock(mainEl.innerText || "") : "";
-      out.description = mainText || metaContent("description") || metaContent("og:description");
+      if (needDescription) {
+        // Cheap meta sources first; only touch the DOM text if they are empty.
+        const meta = metaContent("description") || metaContent("og:description");
+        const mainEl =
+          document.querySelector("main") ||
+          document.querySelector("article") ||
+          document.querySelector('[role="main"]') ||
+          document.body;
+        const mainText = mainEl ? cleanBlock(mainEl.innerText || "") : "";
+        out.description = mainText || meta;
+      }
     } catch (e) {
       /* ignore */
     }
@@ -437,16 +458,18 @@
   };
 
   merge(fromJsonLd());
-  merge(fromSiteSelectors());
-  merge(fromHeadingAnchor());
+  // Short-circuit: JSON-LD alone often yields everything (most ATS boards).
+  if (!(result.title && result.company && result.description)) {
+    merge(fromSiteSelectors());
+  }
+  if (!(result.title && result.company && result.description)) {
+    merge(fromHeadingAnchor());
+  }
   // On LinkedIn, never fall back to dumping the whole page (search results,
   // nav, and upsells pollute it). Elsewhere the generic fallback is still useful.
-  if (!location.hostname.includes("linkedin.com")) {
-    merge(fromGeneric());
-  } else {
-    const g = fromGeneric();
-    delete g.description;
-    merge(g);
+  if (!(result.title && result.company && result.description)) {
+    const onLinkedIn = location.hostname.includes("linkedin.com");
+    merge(fromGeneric(!onLinkedIn && !result.description));
   }
 
   if (result.description.length > MAX_DESC) {

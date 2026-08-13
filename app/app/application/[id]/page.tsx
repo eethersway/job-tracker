@@ -11,6 +11,7 @@ import { LoadingBlock, Spinner } from "@/components/Spinner";
 import { StatusSelect } from "@/components/StatusSelect";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/format";
+import { safeHref } from "@/lib/safe-url";
 import type {
   Application,
   ApplicationStatus,
@@ -39,6 +40,7 @@ export default function ApplicationDetailPage() {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   // Null until the profile loads — the panels hide price tags while null.
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [suspended, setSuspended] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -143,11 +145,16 @@ export default function ApplicationDetailPage() {
         const supabase = createClient();
         const { data, error } = await supabase
           .from("profile")
-          .select("*")
+          .select("anthropic_api_key, suspended")
           .maybeSingle();
         if (error) throw new Error(error.message);
-        const p = (data as Profile | null) ?? null;
-        if (!cancelled) setHasApiKey(Boolean(p?.anthropic_api_key));
+        const p =
+          (data as Pick<Profile, "anthropic_api_key" | "suspended"> | null) ??
+          null;
+        if (!cancelled) {
+          setHasApiKey(Boolean(p?.anthropic_api_key));
+          setSuspended(Boolean(p?.suspended));
+        }
       } catch {
         // Leave hasApiKey null — panels simply omit the price tag.
       }
@@ -204,6 +211,12 @@ export default function ApplicationDetailPage() {
       showToast("This field cannot be empty.", "error");
       setHeaderCompany(application.company_name);
       setHeaderTitle(application.job_title);
+      return;
+    }
+    // Never store a non-http(s) URL: it would become a click-to-XSS sink.
+    if (field === "job_url" && value && !safeHref(value)) {
+      showToast("The job URL must start with http:// or https://.", "error");
+      setHeaderUrl(application.job_url ?? "");
       return;
     }
     try {
@@ -359,9 +372,17 @@ export default function ApplicationDetailPage() {
                 className={`${headerInputClass} w-56 text-slate-400 placeholder-slate-600`}
                 aria-label="Job URL"
               />
-              {application.job_url && (
+              {application.job_url && !safeHref(application.job_url) && (
+                <span
+                  className="rounded-lg bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300"
+                  title="Only http and https links can be opened"
+                >
+                  Unsupported link
+                </span>
+              )}
+              {safeHref(application.job_url) && (
                 <a
-                  href={application.job_url}
+                  href={safeHref(application.job_url) as string}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-800 hover:text-sky-400"
@@ -492,6 +513,7 @@ export default function ApplicationDetailPage() {
           company={company}
           onResearchComplete={fetchApplication}
           hasApiKey={hasApiKey}
+          suspended={suspended}
         />
       )}
 
@@ -506,6 +528,7 @@ export default function ApplicationDetailPage() {
           onApplicationChanged={fetchApplication}
           hasApiKey={hasApiKey}
           researchDone={Boolean(company?.researched_at)}
+          suspended={suspended}
         />
       )}
 
@@ -517,6 +540,7 @@ export default function ApplicationDetailPage() {
           onDocumentsChanged={fetchDocuments}
           filenameHint={application.company_name}
           hasApiKey={hasApiKey}
+          suspended={suspended}
         />
       )}
 

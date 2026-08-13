@@ -24,22 +24,27 @@ export interface GenerationResult {
   insufficientCredits?: boolean;
   /** How many cents the generation would have needed (from the 402 body). */
   neededCents?: number | null;
+  /** True when the edge function returned 429 (rate limited). */
+  rateLimited?: boolean;
 }
 
 /**
  * Normalize a `supabase.functions.invoke` error. Edge functions signal
- * "insufficient credits" with HTTP 402 and a `{ error, needed_cents }` body;
- * supabase-js surfaces non-2xx responses as a FunctionsHttpError whose
- * `.context` is the raw Response.
+ * "insufficient credits" with HTTP 402 and a `{ error, needed_cents }` body,
+ * and rate limiting with HTTP 429 and a `{ error }` body; supabase-js
+ * surfaces non-2xx responses as a FunctionsHttpError whose `.context` is the
+ * raw Response, so the JSON body is read from there.
  */
 export async function describeInvokeError(error: unknown): Promise<{
   message: string;
   insufficientCredits: boolean;
   neededCents: number | null;
+  rateLimited: boolean;
 }> {
   let message = error instanceof Error ? error.message : String(error);
   let insufficientCredits = false;
   let neededCents: number | null = null;
+  let rateLimited = false;
   const ctx = (
     error as { context?: { status?: number; json?: () => Promise<unknown> } } | null
   )?.context;
@@ -55,11 +60,17 @@ export async function describeInvokeError(error: unknown): Promise<{
           typeof body?.needed_cents === "number" ? body.needed_cents : null;
         if (!body?.error) message = "Not enough credits.";
       }
+      if (ctx.status === 429) {
+        rateLimited = true;
+        if (!body?.error) {
+          message = "You're going a bit fast. Please wait a moment and retry.";
+        }
+      }
     } catch {
       /* body already consumed or not JSON — keep the generic message */
     }
   }
-  return { message, insufficientCredits, neededCents };
+  return { message, insufficientCredits, neededCents, rateLimited };
 }
 
 const pending = new Map<string, Promise<GenerationResult>>();
@@ -125,6 +136,7 @@ export function startGeneration(applicationId: string, type: DocumentType) {
           error: info.message,
           insufficientCredits: info.insufficientCredits,
           neededCents: info.neededCents,
+          rateLimited: info.rateLimited,
         };
       }
       const r = data as GenerateDocumentResponse | null;

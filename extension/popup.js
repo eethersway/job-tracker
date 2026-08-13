@@ -1,4 +1,4 @@
-/* JobTracker Capture — popup logic */
+/* StrongerApplicant Capture — popup logic */
 
 const $ = (id) => document.getElementById(id);
 

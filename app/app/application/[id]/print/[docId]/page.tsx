@@ -33,7 +33,8 @@ export default function PrintDocumentPage() {
             .eq("id", params.docId)
             .eq("application_id", params.id)
             .maybeSingle(),
-          supabase.from("profile").select("*").maybeSingle(),
+          // This page only needs the name for the document title.
+          supabase.from("profile").select("full_name").maybeSingle(),
           supabase
             .from("applications")
             .select("company_name")

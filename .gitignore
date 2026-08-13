@@ -18,3 +18,7 @@ app/*.local
 
 .vercel/
 .write-test
+node_modules/
+.next/
+.vercel/
+.vercelignore

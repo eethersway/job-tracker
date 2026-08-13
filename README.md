@@ -9,7 +9,7 @@ An AI-powered job application tracker: capture postings in one click, get automa
 ## Features
 
 - **Application pipeline** — statuses (Applied, Screening, Interviewing, Negotiating, Accepted, Rejected, Declined, Ghosted), search, sorting, notes, and per-status stat filters
-- **One-click capture** — a Chrome extension extracts the company, title, location, and full description from LinkedIn and other job boards straight into your tracker
+- **Add jobs two ways** — paste a posting link and the app fetches and parses it (no install needed), or use the Chrome extension for one-click capture from any job board
 - **Automatic company research** — every captured job gets researched in the background: what the company does, size, industry, HQ, funding/investors, recent news, and why it matters for your role
 - **Tailored resume generation** — rewrites your master resume for each specific job with strict rules: only relevant experience, achievement- and number-focused bullets, never fabricates anything, no em dashes
 - **Call outs** — every resume comes with a short fit assessment: Strong/Moderate/Stretch, your strongest matches to emphasize, and gaps to be ready for
@@ -84,10 +84,11 @@ StrongerApplicant ships an MCP server so any MCP-capable LLM client (Claude Code
 app/                        Next.js 15 web app (Vercel)
 extension/                  Chrome extension (Manifest V3)
 supabase/schema.sql         Database schema (tables, RLS, triggers)
-supabase/functions/         Edge functions: capture-job, research-company,
-                            generate-document, create-checkout, stripe-webhook,
-                            x402-topup, mcp
+supabase/functions/         Edge functions: capture-job, import-url,
+                            research-company, generate-document,
+                            create-checkout, stripe-webhook, x402-topup, mcp
 supabase/SETUP-PAYMENTS.md  Payments configuration runbook (self-hosting)
+supabase/config.toml        CLI config; pins verify_jwt per edge function
 ```
 
 ## Self-hosting
@@ -96,9 +97,10 @@ You can run the entire stack yourself for free (minus AI usage):
 
 1. **Supabase**: create a free project, run `supabase/schema.sql` in the SQL editor, deploy the edge functions:
    ```bash
-   supabase functions deploy research-company generate-document create-checkout x402-topup
-   supabase functions deploy capture-job stripe-webhook mcp --no-verify-jwt
+   supabase link --project-ref <your-project-ref>
+   supabase functions deploy
    ```
+   `supabase/config.toml` pins `verify_jwt` per function, so a plain `supabase functions deploy` gets the auth settings right. Deploy one at a time with `supabase functions deploy <name>`. `capture-job`, `stripe-webhook`, and `mcp` run with `verify_jwt = false` because they authenticate themselves (capture token, Stripe signature, API token); without `config.toml` you would need `--no-verify-jwt` for those three.
 2. **Web app**: deploy `app/` to Vercel with env vars `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 3. **Payments (optional)**: follow `supabase/SETUP-PAYMENTS.md` for Stripe + x402 setup, or skip it and run BYO-API-key only
 4. Sign up, follow the onboarding, and point the extension's Options at your own URLs

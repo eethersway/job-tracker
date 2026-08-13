@@ -15,6 +15,7 @@ import {
   RESUME_PRICE_CENTS,
   formatCents,
 } from "@/lib/pricing";
+import { safeHref } from "@/lib/safe-url";
 import type {
   CreateCheckoutResponse,
   CreditTransaction,
@@ -58,7 +59,14 @@ export default function BillingPage() {
     try {
       const supabase = createClient();
       const [profileRes, txRes] = await Promise.all([
-        supabase.from("profile").select("*").maybeSingle(),
+        // Only the columns this page uses: never pull the API key or tokens
+        // into a page that has no need for them.
+        supabase
+          .from("profile")
+          .select(
+            "user_id, credits_cents, anthropic_api_key, suspended, suspended_reason"
+          )
+          .maybeSingle(),
         supabase
           .from("credit_transactions")
           .select("*")
@@ -107,6 +115,7 @@ export default function BillingPage() {
   }, []);
 
   async function buyPack(pack: 500 | 1000) {
+    if (suspended) return;
     setBuyingPack(pack);
     try {
       const supabase = createClient();
@@ -116,13 +125,25 @@ export default function BillingPage() {
       );
       if (error) {
         const info = await describeInvokeError(error);
+        if (info.rateLimited) {
+          // Surface the server's own throttling message as-is.
+          showToast(info.message, "error");
+          setBuyingPack(null);
+          return;
+        }
         throw new Error(info.message);
       }
       const result = data as CreateCheckoutResponse | null;
       if (!result?.ok || !result.url) {
         throw new Error(result?.error ?? "Checkout could not be created.");
       }
-      window.location.href = result.url;
+      // Defense in depth: only ever navigate to an http(s) URL, even though
+      // this one comes from our own edge function.
+      const checkoutUrl = safeHref(result.url);
+      if (!checkoutUrl) {
+        throw new Error("Checkout returned an unsupported URL.");
+      }
+      window.location.href = checkoutUrl;
       // Keep the spinner on while the browser navigates to Stripe.
     } catch (err) {
       showToast(
@@ -144,6 +165,12 @@ export default function BillingPage() {
    * header automatically.
    */
   async function payWithCrypto() {
+    if (suspended) {
+      setCryptoError(
+        "Top-ups are paused while your account is on hold. Contact support to restore it."
+      );
+      return;
+    }
     setCryptoBusy(true);
     setCryptoError(null);
     try {
@@ -262,6 +289,7 @@ export default function BillingPage() {
 
   const hasKey = Boolean(profile?.anthropic_api_key);
   const balance = profile?.credits_cents ?? 0;
+  const suspended = Boolean(profile?.suspended);
 
   const packButton =
     "inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-50";
@@ -371,10 +399,21 @@ export default function BillingPage() {
             <p className="mt-1 text-sm text-slate-400">
               Pay by card via Stripe. Credits never expire.
             </p>
+            {suspended && (
+              <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
+                Purchases are paused while your account is on hold. Contact
+                support to restore it.
+              </p>
+            )}
             <div className="mt-4 flex flex-wrap gap-3">
               <button
                 onClick={() => void buyPack(500)}
-                disabled={buyingPack !== null}
+                disabled={buyingPack !== null || suspended}
+                title={
+                  suspended
+                    ? "Your account is on hold, so purchases are paused."
+                    : undefined
+                }
                 className={packButton}
               >
                 {buyingPack === 500 && <Spinner className="h-4 w-4" />}
@@ -382,7 +421,12 @@ export default function BillingPage() {
               </button>
               <button
                 onClick={() => void buyPack(1000)}
-                disabled={buyingPack !== null}
+                disabled={buyingPack !== null || suspended}
+                title={
+                  suspended
+                    ? "Your account is on hold, so purchases are paused."
+                    : undefined
+                }
                 className={packButton}
               >
                 {buyingPack === 1000 && <Spinner className="h-4 w-4" />}
@@ -420,7 +464,7 @@ export default function BillingPage() {
               </select>
               <button
                 onClick={() => void payWithCrypto()}
-                disabled={cryptoBusy}
+                disabled={cryptoBusy || suspended}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-800 disabled:opacity-50"
               >
                 {cryptoBusy && <Spinner className="h-4 w-4" />}

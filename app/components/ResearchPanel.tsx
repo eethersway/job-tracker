@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toast";
 import { formatDateTime } from "@/lib/format";
 import { describeInvokeError } from "@/lib/generation";
 import { RESEARCH_PRICE_CENTS, formatCents } from "@/lib/pricing";
+import { safeHref } from "@/lib/safe-url";
 import type { Company, ResearchCompanyResponse } from "@/lib/types";
 
 interface ResearchPanelProps {
@@ -21,6 +22,8 @@ interface ResearchPanelProps {
    * parent is still loading the profile — no price tag is shown then.
    */
   hasApiKey?: boolean | null;
+  /** Account on hold: research is blocked until it is restored. */
+  suspended?: boolean;
 }
 
 function FactItem({ label, value }: { label: string; value: string | null }) {
@@ -40,12 +43,14 @@ export function ResearchPanel({
   company,
   onResearchComplete,
   hasApiKey = null,
+  suspended = false,
 }: ResearchPanelProps) {
   const { showToast } = useToast();
   const [running, setRunning] = useState(false);
   const [insufficientCredits, setInsufficientCredits] = useState(false);
 
   async function runResearch() {
+    if (suspended) return;
     setRunning(true);
     setInsufficientCredits(false);
     try {
@@ -66,6 +71,11 @@ export function ResearchPanel({
             }. Top up on the Billing page.`,
             "error"
           );
+          return;
+        }
+        if (info.rateLimited) {
+          // Surface the server's own throttling message.
+          showToast(info.message, "error");
           return;
         }
         throw new Error(info.message);
@@ -124,7 +134,12 @@ export function ResearchPanel({
             ))}
           <button
             onClick={() => void runResearch()}
-            disabled={running}
+            disabled={running || suspended}
+            title={
+              suspended
+                ? "Your account is on hold, so research is paused."
+                : undefined
+            }
             className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-60"
           >
             {running && <Spinner className="h-4 w-4" />}
@@ -136,6 +151,13 @@ export function ResearchPanel({
           </button>
         </div>
       </div>
+
+      {suspended && (
+        <p className="rounded-xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          Research is paused while your account is on hold. Existing research
+          stays available.
+        </p>
+      )}
 
       {insufficientCredits && (
         <div
@@ -168,16 +190,25 @@ export function ResearchPanel({
             <FactItem label="Products" value={company.products} />
             <FactItem label="Recent news" value={company.recent_news} />
           </dl>
-          {company.website && (
-            <a
-              href={company.website}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-block text-sm text-sky-400 underline-offset-2 hover:underline"
-            >
-              {company.website}
-            </a>
-          )}
+          {company.website &&
+            (safeHref(company.website) ? (
+              <a
+                href={safeHref(company.website) as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-block text-sm text-sky-400 underline-offset-2 hover:underline"
+              >
+                {company.website}
+              </a>
+            ) : (
+              // Not an http(s) URL: show it as plain text, never as a link.
+              <span
+                className="mt-4 inline-block break-all text-sm text-slate-400"
+                title="Only http and https links can be opened"
+              >
+                {company.website}
+              </span>
+            ))}
         </div>
       )}
 

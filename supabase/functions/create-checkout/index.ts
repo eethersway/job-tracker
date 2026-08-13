@@ -70,6 +70,8 @@ Deno.serve(async (req: Request) => {
       "line_items[0][price_data][unit_amount]": String(pack),
       "line_items[0][quantity]": "1",
       "metadata[user_id]": who.sub,
+      // The webhook only mints credits for sessions carrying this marker.
+      "metadata[purpose]": "credits",
       success_url: `${origin}/billing?success=1`,
       cancel_url: `${origin}/billing?canceled=1`,
     });

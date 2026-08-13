@@ -13,6 +13,41 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+// Rate limiting. Fails OPEN: if the check itself errors the database is already
+// in trouble and the rest of this function will fail anyway.
+//
+// NOTE: the check is applied to the APPLICATION OWNER even when the caller is
+// service_role. capture-job and generate-document both invoke this function
+// internally, and those calls spend the owner's credits, so they deliberately
+// count against the owner's 'research' bucket too.
+async function underLimit(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  userId: string,
+  bucket: string,
+  max: number,
+  windowSeconds: number,
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc("check_rate_limit", {
+      p_user_id: userId,
+      p_bucket: bucket,
+      p_max: max,
+      p_window_seconds: windowSeconds,
+    });
+    if (error) {
+      console.error(`research-company: rate limit check '${bucket}' failed: ${error.message}`);
+      return true;
+    }
+    return data !== false;
+  } catch (e) {
+    console.error(`research-company: rate limit check '${bucket}' threw: ${String((e as Error)?.message ?? e)}`);
+    return true;
+  }
+}
+
+const TOO_FAST = "You are going too fast. Try again in a minute.";
+
 // verify_jwt=true already validated the signature; we only need the claims.
 function caller(req: Request): { sub: string | null; role: string | null } {
   try {
@@ -46,6 +81,14 @@ Deno.serve(async (req: Request) => {
     const who = caller(req);
     if (who.role !== "service_role" && who.sub !== app.user_id) {
       return json({ ok: false, error: "Not allowed" }, 403);
+    }
+
+    // Rate limit before any spending or AI work.
+    if (!await underLimit(supabase, app.user_id, "research_burst", 5, 60)) {
+      return json({ ok: false, error: TOO_FAST }, 429);
+    }
+    if (!await underLimit(supabase, app.user_id, "research", 30, 3600)) {
+      return json({ ok: false, error: TOO_FAST }, 429);
     }
 
     const { data: prof } = await supabase
@@ -82,19 +125,33 @@ Deno.serve(async (req: Request) => {
       apiKey = centralKey as string;
     }
 
-    // Refund the charge if the AI call fails or returns unusable output.
+    // Refund the charge if anything after it fails. Fires at most once: the ref
+    // is random per call, so a double refund would double-credit.
+    let refunded = false;
     const refund = async () => {
-      if (!charged) return;
+      if (!charged || refunded) return;
+      refunded = true;
       try {
-        await supabase.rpc("grant_credits", {
+        const { data: ok, error } = await supabase.rpc("grant_credits", {
           p_user_id: app.user_id,
           p_amount_cents: PRICE,
           p_kind: "refund",
           p_ref: `spend_research:${application_id}:${crypto.randomUUID()}`,
         });
-      } catch (_e) { /* best-effort refund */ }
+        if (error || ok === false) {
+          console.error(
+            `research-company: REFUND FAILED for user ${app.user_id} application ${application_id} (${PRICE}c): ${error?.message ?? "grant_credits returned false"}`,
+          );
+        }
+      } catch (e) {
+        console.error(
+          `research-company: REFUND THREW for user ${app.user_id} application ${application_id} (${PRICE}c): ${String((e as Error)?.message ?? e)}`,
+        );
+      }
     };
 
+    // Everything below is post-charge: any failure must refund before returning.
+    try {
     const prompt = `Research the company "${app.company_name}" using web search.\n` +
       `Context: they posted a job titled "${app.job_title}"${app.location ? ` in ${app.location}` : ""}.` +
       `${app.job_url ? ` Job posting URL: ${app.job_url}` : ""}\n\n` +
@@ -155,13 +212,17 @@ Deno.serve(async (req: Request) => {
       researched_at: new Date().toISOString(),
     };
 
-    // Upsert by case-insensitive name, scoped to this user
-    const { data: existing } = await supabase
+    // Upsert by case-insensitive name, scoped to this user. The match is done in
+    // JS on purpose: passing a model/user supplied name to .ilike() lets "%" and
+    // "_" act as LIKE wildcards and overwrite an unrelated company row.
+    const { data: candidates } = await supabase
       .from("companies")
-      .select("id")
-      .eq("user_id", app.user_id)
-      .ilike("name", companyRow.name)
-      .maybeSingle();
+      .select("id, name")
+      .eq("user_id", app.user_id);
+    const wanted = String(companyRow.name ?? "").trim().toLowerCase();
+    const existing = (candidates ?? []).find(
+      (c) => String(c.name ?? "").trim().toLowerCase() === wanted,
+    ) ?? null;
 
     let company_id: string;
     if (existing) {
@@ -185,6 +246,11 @@ Deno.serve(async (req: Request) => {
     if (linkErr) throw linkErr;
 
     return json({ ok: true, company_id });
+    } catch (e) {
+      // Post-charge failure (db write, network, bad payload): give the money back.
+      await refund();
+      return json({ ok: false, error: String((e as Error)?.message ?? e) }, 500);
+    }
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message ?? e) }, 500);
   }

@@ -22,6 +22,37 @@ function stripDashes(s: string): string {
     .replace(/–/g, "-");
 }
 
+// Rate limiting. Fails OPEN: if the check itself errors the database is already
+// in trouble and the rest of this function will fail anyway, so we do not turn
+// an infrastructure hiccup into a wall of 429s for paying users.
+async function underLimit(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  userId: string,
+  bucket: string,
+  max: number,
+  windowSeconds: number,
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc("check_rate_limit", {
+      p_user_id: userId,
+      p_bucket: bucket,
+      p_max: max,
+      p_window_seconds: windowSeconds,
+    });
+    if (error) {
+      console.error(`generate-document: rate limit check '${bucket}' failed: ${error.message}`);
+      return true;
+    }
+    return data !== false;
+  } catch (e) {
+    console.error(`generate-document: rate limit check '${bucket}' threw: ${String((e as Error)?.message ?? e)}`);
+    return true;
+  }
+}
+
+const TOO_FAST = "You are going too fast. Try again in a minute.";
+
 function caller(req: Request): { sub: string | null; role: string | null } {
   try {
     const t = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
@@ -66,6 +97,15 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, error: "This application has no job description yet - add one first." }, 400);
     }
 
+    // Rate limit before any spending or AI work. Burst guard first (cheap), then
+    // the hourly cap. Charged to the application owner regardless of caller.
+    if (!await underLimit(supabase, app.user_id, "gen_burst", 5, 60)) {
+      return json({ ok: false, error: TOO_FAST }, 429);
+    }
+    if (!await underLimit(supabase, app.user_id, "gen", 20, 3600)) {
+      return json({ ok: false, error: TOO_FAST }, 429);
+    }
+
     const { data: profile } = await supabase
       .from("profile")
       .select("*")
@@ -106,19 +146,33 @@ Deno.serve(async (req: Request) => {
       apiKey = centralKey as string;
     }
 
-    // Refund the charge if the AI call fails or returns unusable output.
+    // Refund the charge if anything after it fails. Fires at most once: the ref
+    // is random per call, so a double refund would double-credit.
+    let refunded = false;
     const refund = async () => {
-      if (!charged) return;
+      if (!charged || refunded) return;
+      refunded = true;
       try {
-        await supabase.rpc("grant_credits", {
+        const { data: ok, error } = await supabase.rpc("grant_credits", {
           p_user_id: billed_user_id,
           p_amount_cents: PRICE,
           p_kind: "refund",
           p_ref: `${SPEND_KIND}:${application_id}:${crypto.randomUUID()}`,
         });
-      } catch (_e) { /* best-effort refund */ }
+        if (error || ok === false) {
+          console.error(
+            `generate-document: REFUND FAILED for user ${billed_user_id} application ${application_id} (${PRICE}c, ${SPEND_KIND}): ${error?.message ?? "grant_credits returned false"}`,
+          );
+        }
+      } catch (e) {
+        console.error(
+          `generate-document: REFUND THREW for user ${billed_user_id} application ${application_id} (${PRICE}c, ${SPEND_KIND}): ${String((e as Error)?.message ?? e)}`,
+        );
+      }
     };
 
+    // Everything below is post-charge: any failure must refund before returning.
+    try {
     // --- Research-first: ensure company research exists before generating ---
     const loadResearch = async () => {
       if (!app!.company_id) return null;
@@ -222,6 +276,11 @@ Deno.serve(async (req: Request) => {
     }
 
     return json({ ok: true, document_id: doc.id, has_callouts: !!callouts });
+    } catch (e) {
+      // Post-charge failure (document insert, network, bad payload): refund.
+      await refund();
+      return json({ ok: false, error: String((e as Error)?.message ?? e) }, 500);
+    }
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message ?? e) }, 500);
   }

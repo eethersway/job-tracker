@@ -1,4 +1,4 @@
-/* JobTracker Capture — options page */
+/* StrongerApplicant Capture — options page */
 
 const $ = (id) => document.getElementById(id);
 

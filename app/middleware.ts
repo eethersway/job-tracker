@@ -41,11 +41,15 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/signup");
-  // Public: the marketing landing page, auth pages, and Supabase auth
-  // callbacks (email confirmation links, etc.). Signed-in users may still
-  // visit "/" — they just get an "Open dashboard" button there.
+  // Public: the marketing landing page, auth pages, password reset, and
+  // Supabase auth callbacks (email confirmation links, etc.). Signed-in
+  // users may still visit "/" — they just get an "Open dashboard" button
+  // there — and /reset-password must stay reachable mid-recovery-flow.
   const isPublic =
-    pathname === "/" || isAuthPage || pathname.startsWith("/auth");
+    pathname === "/" ||
+    isAuthPage ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/reset-password");
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
