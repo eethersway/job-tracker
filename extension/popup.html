@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>JobTracker Capture</title>
+</head>
+<body>
+  <div class="popup">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="7" width="20" height="14" rx="3" fill="#6366f1"/>
+        <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" stroke="#a5b4fc" stroke-width="2" fill="none"/>
+        <rect x="10" y="12" width="4" height="3" rx="1" fill="#c7d2fe"/>
+      </svg>
+      <div class="brand-name">Job<span>Tracker</span></div>
+      <div class="spacer"></div>
+      <button id="open-options" class="icon-btn" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Not configured state -->
+    <div id="setup-view" class="setup-note hidden">
+      <p>Connect the extension to your job tracker to start capturing postings.</p>
+      <button id="setup-btn" class="btn">Open settings</button>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading-view" class="skeleton">
+      <span class="spin"></span>&nbsp; Reading page…
+    </div>
+
+    <!-- Extraction failed on restricted pages -->
+    <div id="blocked-view" class="setup-note hidden">
+      <p id="blocked-msg">This page can't be captured. Open a job posting in a regular tab and try again.</p>
+    </div>
+
+    <!-- Main form -->
+    <form id="capture-form" class="hidden">
+      <div class="row">
+        <div class="field">
+          <label for="company">Company</label>
+          <input type="text" id="company" autocomplete="off" placeholder="Acme Inc." />
+        </div>
+        <div class="field">
+          <label for="title">Job Title</label>
+          <input type="text" id="title" autocomplete="off" placeholder="Software Engineer" />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="location">Location</label>
+          <input type="text" id="location" autocomplete="off" placeholder="Remote / City" />
+        </div>
+        <div class="field">
+          <label for="salary">Salary</label>
+          <input type="text" id="salary" autocomplete="off" placeholder="Not listed" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="url">Job URL</label>
+        <input type="url" id="url" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="description">Job Description</label>
+        <textarea id="description" rows="6" placeholder="Paste or edit the description…"></textarea>
+      </div>
+      <button type="submit" id="save-btn" class="btn">Save to Tracker</button>
+      <div id="status" class="status"></div>
+    </form>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

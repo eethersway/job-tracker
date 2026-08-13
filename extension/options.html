@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>JobTracker Capture — Settings</title>
+</head>
+<body>
+  <div class="options-page">
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="7" width="20" height="14" rx="3" fill="#6366f1"/>
+        <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" stroke="#a5b4fc" stroke-width="2" fill="none"/>
+        <rect x="10" y="12" width="4" height="3" rx="1" fill="#c7d2fe"/>
+      </svg>
+      <div class="brand-name">Job<span>Tracker</span> Capture</div>
+    </div>
+    <h1 class="options-title">Settings</h1>
+    <p class="options-sub">Connect the extension to your self-hosted job tracker.</p>
+
+    <form id="options-form">
+      <div class="field">
+        <label for="functionsBaseUrl">Functions base URL</label>
+        <input type="url" id="functionsBaseUrl" placeholder="https://xyz.supabase.co/functions/v1" required />
+        <div class="hint">Jobs are saved via POST to <code>&lt;base&gt;/capture-job</code>.</div>
+      </div>
+      <div class="field">
+        <label for="captureToken">Capture token</label>
+        <input type="password" id="captureToken" placeholder="secret token" required autocomplete="off" />
+        <div class="hint">Sent as the <code>x-capture-token</code> header.</div>
+      </div>
+      <div class="field">
+        <label for="trackerUrl">Tracker dashboard URL</label>
+        <input type="url" id="trackerUrl" placeholder="https://tracker.example.com" />
+        <div class="hint">Optional — used for the "Open tracker" link after saving.</div>
+      </div>
+      <button type="submit" class="btn">Save settings</button>
+      <div id="status" class="status"></div>
+    </form>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
