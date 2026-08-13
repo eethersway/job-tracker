@@ -60,7 +60,7 @@ Deno.serve(async (req: Request) => {
         } catch (_e) { /* ignore bad referer */ }
       }
     }
-    if (!origin) origin = "https://job-tracker-eta-peach.vercel.app";
+    if (!origin) origin = "https://strongerapplicant.com";
 
     const packName = pack === 500 ? "JobTracker credits ($5 pack)" : "JobTracker credits ($10 pack)";
     const form = new URLSearchParams({

@@ -1,58 +1,25 @@
-# JobTracker Capture — Chrome Extension
+# StrongerApplicant Capture — Chrome Extension
 
-Capture job postings from any site (LinkedIn, Greenhouse, Lever, Ashby, Workday, Indeed, or anything else) and save them to your self-hosted job tracker with one click.
+One-click job posting capture for [strongerapplicant.com](https://strongerapplicant.com) (or your own self-hosted instance).
 
-## How it works
+## What it does
 
-1. Open a job posting in a tab.
-2. Click the JobTracker Capture icon in the toolbar.
-3. The popup extracts the posting (JSON-LD structured data first, then site-specific selectors, then generic fallbacks) into an editable form.
-4. Review/edit the fields and click **Save to Tracker**. The extension POSTs the job to your tracker's `capture-job` function.
-
-The extension uses only `activeTab`, `scripting`, and `storage` permissions — it never reads pages in the background and shows no broad host-access warnings.
+Click the extension icon on any job posting and it extracts the company, job title, location, salary (when listed), and the full description — using JSON-LD structured data, site-specific logic for LinkedIn / Greenhouse / Lever / Ashby / Workday / Indeed (including auto-expanding LinkedIn's "…more" collapsed descriptions), and a generic fallback for other sites. You review the fields in the popup, hit **Save to Tracker**, and the job lands in your dashboard as a "New" application. Company research starts automatically in the background.
 
 ## Install (load unpacked)
 
-1. Open Chrome and go to `chrome://extensions`.
-2. Enable **Developer mode** (toggle in the top-right corner).
-3. Click **Load unpacked**.
-4. Select this folder (`extension/` — the one containing `manifest.json`).
-5. (Optional) Click the puzzle-piece icon in the toolbar and pin **JobTracker Capture**.
+1. Download/unzip this folder
+2. Open `chrome://extensions`, toggle **Developer mode** (top right)
+3. Click **Load unpacked**, select this `extension/` folder
 
-## Configure
+## Configure (one time)
 
-1. Right-click the extension icon → **Options** (or click the gear in the popup).
-2. Fill in:
-   - **Functions base URL** — your functions endpoint base, e.g. `https://xyz.supabase.co/functions/v1`. Jobs are saved via `POST <base>/capture-job`.
-   - **Capture token** — the shared secret your `capture-job` function expects; sent as the `x-capture-token` header.
-   - **Tracker dashboard URL** — (optional) your tracker's web UI, used for the "Open tracker" link after a successful save.
-3. Click **Save settings**. Settings sync via `chrome.storage.sync` across your Chrome profiles.
+Right-click the extension icon → **Options**:
 
-Until the base URL and token are set, the popup shows a "configure me" prompt.
+| Field | Value |
+|---|---|
+| Functions base URL | `https://awebariljrravthdzujq.supabase.co/functions/v1` (self-hosters: your Supabase functions URL) |
+| Capture token | From the app's **Settings** page — personal to your account, regenerable any time |
+| Tracker dashboard URL | `https://strongerapplicant.com` (used for the "Open tracker" link) |
 
-## Request format
-
-```
-POST ${functionsBaseUrl}/capture-job
-Content-Type: application/json
-x-capture-token: <token>
-
-{
-  "company_name": "...",
-  "job_title": "...",
-  "job_url": "...",
-  "job_description": "...",
-  "location": "...",
-  "salary": "...",
-  "source": "extension"
-}
-```
-
-Expected success response: `200` with `{ "ok": true, "id": "<uuid>" }`. Any other response is shown as a readable error in the popup.
-
-## Notes
-
-- LinkedIn URLs are canonicalized: `...?currentJobId=12345` becomes `https://www.linkedin.com/jobs/view/12345/`. Tracking params (`utm_*`, `gh_src`, `trk`, …) are stripped on other sites.
-- Descriptions are trimmed to ~15,000 characters.
-- Extraction is best-effort; every field is editable before saving.
-- Browser-internal pages (`chrome://`, the Web Store, etc.) can't be captured.
+Captures authenticate with your capture token (sent as the `x-capture-token` header) and are saved to your account only.
