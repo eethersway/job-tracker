@@ -71,13 +71,53 @@ Deno.serve(async (req: Request) => {
       .select("*")
       .eq("user_id", app.user_id)
       .maybeSingle();
-    if (!profile?.anthropic_api_key) {
-      return json({ ok: false, error: "No Anthropic API key on file - add yours in Settings." }, 400);
-    }
     if (!profile?.master_resume_md) {
       return json({ ok: false, error: "No master resume found - fill out Settings first." }, 400);
     }
-    const apiKey = profile.anthropic_api_key;
+
+    // Billing: BYO key = free tier; otherwise use the central key and spend credits.
+    // Note: the research-first call below charges its own 25c research price when needed.
+    const PRICE = type === "resume" ? 25 : 15; // cents
+    const SPEND_KIND = type === "resume" ? "spend_resume" : "spend_cover_letter";
+    const billed_user_id = app.user_id; // app may be reloaded (and could be null) later
+    let apiKey: string | null = profile?.anthropic_api_key ?? null;
+    let charged = false;
+    if (!apiKey) {
+      const { data: centralKey, error: secErr } = await supabase.rpc("get_secret", {
+        k: "CENTRAL_ANTHROPIC_KEY",
+      });
+      if (secErr || !centralKey) {
+        return json({ ok: false, error: "Service is not configured (missing central AI key). Contact support." }, 500);
+      }
+      const { data: paid, error: spendErr } = await supabase.rpc("spend_credits", {
+        p_user_id: billed_user_id,
+        p_amount_cents: PRICE,
+        p_kind: SPEND_KIND,
+        p_ref: application_id,
+      });
+      if (spendErr) throw spendErr;
+      if (!paid) {
+        return json(
+          { ok: false, error: "Not enough credits. Top up on the Billing page.", needed_cents: PRICE },
+          402,
+        );
+      }
+      charged = true;
+      apiKey = centralKey as string;
+    }
+
+    // Refund the charge if the AI call fails or returns unusable output.
+    const refund = async () => {
+      if (!charged) return;
+      try {
+        await supabase.rpc("grant_credits", {
+          p_user_id: billed_user_id,
+          p_amount_cents: PRICE,
+          p_kind: "refund",
+          p_ref: `${SPEND_KIND}:${application_id}:${crypto.randomUUID()}`,
+        });
+      } catch (_e) { /* best-effort refund */ }
+    };
 
     // --- Research-first: ensure company research exists before generating ---
     const loadResearch = async () => {
@@ -146,6 +186,7 @@ Deno.serve(async (req: Request) => {
     });
     if (!resp.ok) {
       const errText = await resp.text();
+      await refund();
       return json({ ok: false, error: `Anthropic API ${resp.status}: ${errText.slice(0, 400)}` }, 502);
     }
     const result = await resp.json();
@@ -154,7 +195,10 @@ Deno.serve(async (req: Request) => {
       .map((b: { text: string }) => b.text)
       .join("\n")
       .trim();
-    if (!raw) return json({ ok: false, error: "Empty response from model; try again" }, 502);
+    if (!raw) {
+      await refund();
+      return json({ ok: false, error: "Empty response from model; try again" }, 502);
+    }
 
     let content = raw;
     let callouts: string | null = null;

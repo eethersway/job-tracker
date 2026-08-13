@@ -50,11 +50,50 @@ Deno.serve(async (req: Request) => {
 
     const { data: prof } = await supabase
       .from("profile")
-      .select("anthropic_api_key")
+      .select("anthropic_api_key, credits_cents")
       .eq("user_id", app.user_id)
       .maybeSingle();
-    const apiKey = prof?.anthropic_api_key;
-    if (!apiKey) return json({ ok: false, error: "No Anthropic API key on file - add yours in Settings." }, 400);
+
+    // Billing: BYO key = free tier; otherwise use the central key and spend credits.
+    const PRICE = 25; // cents
+    let apiKey: string | null = prof?.anthropic_api_key ?? null;
+    let charged = false;
+    if (!apiKey) {
+      const { data: centralKey, error: secErr } = await supabase.rpc("get_secret", {
+        k: "CENTRAL_ANTHROPIC_KEY",
+      });
+      if (secErr || !centralKey) {
+        return json({ ok: false, error: "Service is not configured (missing central AI key). Contact support." }, 500);
+      }
+      const { data: paid, error: spendErr } = await supabase.rpc("spend_credits", {
+        p_user_id: app.user_id,
+        p_amount_cents: PRICE,
+        p_kind: "spend_research",
+        p_ref: application_id,
+      });
+      if (spendErr) throw spendErr;
+      if (!paid) {
+        return json(
+          { ok: false, error: "Not enough credits. Top up on the Billing page.", needed_cents: PRICE },
+          402,
+        );
+      }
+      charged = true;
+      apiKey = centralKey as string;
+    }
+
+    // Refund the charge if the AI call fails or returns unusable output.
+    const refund = async () => {
+      if (!charged) return;
+      try {
+        await supabase.rpc("grant_credits", {
+          p_user_id: app.user_id,
+          p_amount_cents: PRICE,
+          p_kind: "refund",
+          p_ref: `spend_research:${application_id}:${crypto.randomUUID()}`,
+        });
+      } catch (_e) { /* best-effort refund */ }
+    };
 
     const prompt = `Research the company "${app.company_name}" using web search.\n` +
       `Context: they posted a job titled "${app.job_title}"${app.location ? ` in ${app.location}` : ""}.` +
@@ -79,6 +118,7 @@ Deno.serve(async (req: Request) => {
     });
     if (!resp.ok) {
       const errText = await resp.text();
+      await refund();
       return json({ ok: false, error: `Anthropic API ${resp.status}: ${errText.slice(0, 400)}` }, 502);
     }
     const result = await resp.json();
@@ -88,11 +128,15 @@ Deno.serve(async (req: Request) => {
       .join("\n");
 
     const match = text.match(/<company_json>([\s\S]*?)<\/company_json>/);
-    if (!match) return json({ ok: false, error: "Model did not return structured research; try again" }, 502);
+    if (!match) {
+      await refund();
+      return json({ ok: false, error: "Model did not return structured research; try again" }, 502);
+    }
     let parsed;
     try {
       parsed = JSON.parse(match[1].trim());
     } catch (_e) {
+      await refund();
       return json({ ok: false, error: "Could not parse research JSON; try again" }, 502);
     }
 

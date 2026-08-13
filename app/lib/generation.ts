@@ -20,6 +20,46 @@ export interface GenerationResult {
   ok: boolean;
   document_id?: string;
   error?: string;
+  /** True when the edge function returned 402 (not enough credits). */
+  insufficientCredits?: boolean;
+  /** How many cents the generation would have needed (from the 402 body). */
+  neededCents?: number | null;
+}
+
+/**
+ * Normalize a `supabase.functions.invoke` error. Edge functions signal
+ * "insufficient credits" with HTTP 402 and a `{ error, needed_cents }` body;
+ * supabase-js surfaces non-2xx responses as a FunctionsHttpError whose
+ * `.context` is the raw Response.
+ */
+export async function describeInvokeError(error: unknown): Promise<{
+  message: string;
+  insufficientCredits: boolean;
+  neededCents: number | null;
+}> {
+  let message = error instanceof Error ? error.message : String(error);
+  let insufficientCredits = false;
+  let neededCents: number | null = null;
+  const ctx = (
+    error as { context?: { status?: number; json?: () => Promise<unknown> } } | null
+  )?.context;
+  if (ctx && typeof ctx.json === "function") {
+    try {
+      const body = (await ctx.json()) as
+        | { error?: string; needed_cents?: number }
+        | null;
+      if (body?.error) message = body.error;
+      if (ctx.status === 402) {
+        insufficientCredits = true;
+        neededCents =
+          typeof body?.needed_cents === "number" ? body.needed_cents : null;
+        if (!body?.error) message = "Not enough credits.";
+      }
+    } catch {
+      /* body already consumed or not JSON — keep the generic message */
+    }
+  }
+  return { message, insufficientCredits, neededCents };
 }
 
 const pending = new Map<string, Promise<GenerationResult>>();
@@ -77,8 +117,16 @@ export function startGeneration(applicationId: string, type: DocumentType) {
     .invoke("generate-document", {
       body: { application_id: applicationId, type },
     })
-    .then(({ data, error }) => {
-      if (error) return { ok: false, error: error.message };
+    .then(async ({ data, error }) => {
+      if (error) {
+        const info = await describeInvokeError(error);
+        return {
+          ok: false,
+          error: info.message,
+          insufficientCredits: info.insufficientCredits,
+          neededCents: info.neededCents,
+        };
+      }
       const r = data as GenerateDocumentResponse | null;
       if (!r?.ok) {
         return { ok: false, error: r?.error ?? "Generation reported failure." };

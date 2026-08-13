@@ -46,7 +46,7 @@ export default function SignupPage() {
       }
       if (data.session) {
         // Email confirmation disabled — user is signed in right away.
-        router.push("/");
+        router.push("/dashboard");
         router.refresh();
         return;
       }

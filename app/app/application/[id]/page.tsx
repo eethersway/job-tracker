@@ -16,6 +16,7 @@ import type {
   ApplicationStatus,
   Company,
   DocumentRow,
+  Profile,
 } from "@/lib/types";
 
 type TabKey = "description" | "research" | "resume" | "cover_letter" | "notes";
@@ -36,6 +37,8 @@ export default function ApplicationDetailPage() {
   const [application, setApplication] = useState<Application | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  // Null until the profile loads — the panels hide price tags while null.
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -130,6 +133,30 @@ export default function ApplicationDetailPage() {
     void fetchApplication();
     void fetchDocuments();
   }, [fetchApplication, fetchDocuments]);
+
+  // Fetch the profile once to know whether generations are free (own API
+  // key) or charged to credits — used for the price tags in the panels.
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchProfile() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("profile")
+          .select("*")
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        const p = (data as Profile | null) ?? null;
+        if (!cancelled) setHasApiKey(Boolean(p?.anthropic_api_key));
+      } catch {
+        // Leave hasApiKey null — panels simply omit the price tag.
+      }
+    }
+    void fetchProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /** Persist a partial update and merge it into local state. */
   const updateApplication = useCallback(
@@ -274,7 +301,7 @@ export default function ApplicationDetailPage() {
               : loadError ?? "Failed to load this application."}
           </p>
           <Link
-            href="/"
+            href="/dashboard"
             className="mt-4 inline-block rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
           >
             Back to dashboard
@@ -287,7 +314,7 @@ export default function ApplicationDetailPage() {
   return (
     <AppShell>
       <Link
-        href="/"
+        href="/dashboard"
         className="mb-4 inline-flex items-center gap-1 text-sm text-slate-400 transition hover:text-slate-200"
       >
         ← Back to dashboard
@@ -464,6 +491,7 @@ export default function ApplicationDetailPage() {
           applicationId={application.id}
           company={company}
           onResearchComplete={fetchApplication}
+          hasApiKey={hasApiKey}
         />
       )}
 
@@ -476,6 +504,8 @@ export default function ApplicationDetailPage() {
           filenameHint={application.company_name}
           calloutsMd={application.callouts_md}
           onApplicationChanged={fetchApplication}
+          hasApiKey={hasApiKey}
+          researchDone={Boolean(company?.researched_at)}
         />
       )}
 
@@ -486,6 +516,7 @@ export default function ApplicationDetailPage() {
           documents={documents}
           onDocumentsChanged={fetchDocuments}
           filenameHint={application.company_name}
+          hasApiKey={hasApiKey}
         />
       )}
 

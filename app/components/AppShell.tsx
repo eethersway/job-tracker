@@ -27,12 +27,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const navLink = (href: string, label: string) => {
-    const active =
-      href === "/" ? pathname === "/" : pathname.startsWith(href);
+    const active = pathname.startsWith(href);
     return (
       <Link
         href={href}
-        className={`rounded-lg px-3 py-1.5 text-sm transition ${
+        className={`rounded-lg px-2 py-1.5 text-sm transition sm:px-3 ${
           active
             ? "bg-slate-800 text-slate-100"
             : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
@@ -46,23 +45,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4">
-          <Link href="/" className="flex items-center gap-2">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/20 text-sm font-bold text-sky-400">
               J
             </span>
-            <span className="text-sm font-semibold tracking-tight text-slate-100">
+            <span className="hidden text-sm font-semibold tracking-tight text-slate-100 sm:inline">
               JobTracker
             </span>
           </Link>
           <nav className="flex items-center gap-1">
-            {navLink("/", "Dashboard")}
+            {navLink("/dashboard", "Dashboard")}
             {navLink("/settings", "Settings")}
+            {navLink("/billing", "Billing")}
           </nav>
           <div className="ml-auto">
             <button
               onClick={handleSignOut}
-              className="rounded-lg px-3 py-1.5 text-sm text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-200"
+              className="rounded-lg px-2 py-1.5 text-sm text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-200 sm:px-3"
             >
               Sign out
             </button>

@@ -81,7 +81,29 @@ export interface Profile {
   anthropic_api_key: string | null;
   capture_token: string | null;
   onboarding_dismissed: boolean;
+  /** Pay-as-you-go credit balance in US cents (unused when a key is set). */
+  credits_cents: number;
   updated_at: string;
+}
+
+/** table: credit_transactions (RLS: user can select own) */
+export interface CreditTransaction {
+  id: string;
+  /** Signed amount in cents: positive = top-up, negative = charge. */
+  delta_cents: number;
+  /** e.g. "stripe_topup", "x402_topup", "research", "resume", "cover_letter" */
+  kind: string;
+  /** Optional reference (checkout session, application id, tx hash, ...). */
+  ref: string | null;
+  created_at: string;
+}
+
+/** Response shape of the create-checkout edge function. */
+export interface CreateCheckoutResponse {
+  ok: boolean;
+  /** Stripe Checkout URL to redirect the browser to. */
+  url?: string;
+  error?: string;
 }
 
 /** Fields the user can set when creating an application by hand. */

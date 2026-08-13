@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/AppShell";
 import { LoadingBlock, Spinner } from "@/components/Spinner";
@@ -113,6 +114,7 @@ export default function SettingsPage() {
       setCaptureToken(token);
       setProfile((prev) => ({
         onboarding_dismissed: prev?.onboarding_dismissed ?? false,
+        credits_cents: prev?.credits_cents ?? 0,
         ...prev,
         ...row,
       }));
@@ -260,7 +262,15 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Get a key at{" "}
+                  Optional — with a key, all generation is free. Without one,
+                  generations use your credit balance (see{" "}
+                  <Link
+                    href="/billing"
+                    className="text-sky-400 underline-offset-2 hover:underline"
+                  >
+                    Billing
+                  </Link>
+                  ). Get a key at{" "}
                   <a
                     href="https://console.anthropic.com"
                     target="_blank"
@@ -269,7 +279,7 @@ export default function SettingsPage() {
                   >
                     console.anthropic.com
                   </a>
-                  . It is stored in your account and used only for your own
+                  — it is stored in your account and used only for your own
                   research and generation.
                 </p>
               </div>

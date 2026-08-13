@@ -8,6 +8,12 @@ import { AppShell } from "@/components/AppShell";
 import { ExtensionSteps } from "@/components/ExtensionSteps";
 import { LoadingBlock, Spinner } from "@/components/Spinner";
 import { useToast } from "@/components/Toast";
+import {
+  COVER_LETTER_PRICE_CENTS,
+  RESEARCH_PRICE_CENTS,
+  RESUME_PRICE_CENTS,
+  formatCents,
+} from "@/lib/pricing";
 import { generateCaptureToken } from "@/lib/token";
 import type { Profile } from "@/lib/types";
 
@@ -149,11 +155,13 @@ export default function WelcomePage() {
     } catch {
       // Even if the flag fails to save, let the user through.
     }
-    router.push("/");
+    router.push("/dashboard");
     router.refresh();
   }
 
   const hasKey = Boolean(profile?.anthropic_api_key);
+  const hasCredits = (profile?.credits_cents ?? 0) > 0;
+  const aiReady = hasKey || hasCredits;
   const hasResume = Boolean(profile?.master_resume_md?.trim());
   const captureToken = profile?.capture_token ?? null;
 
@@ -199,54 +207,105 @@ export default function WelcomePage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Step 1: API key */}
+            {/* Step 1: AI setup — own key (free) or pay-as-you-go credits */}
             <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
               <div className="flex items-start gap-4">
-                <StepBadge n={1} done={hasKey} />
+                <StepBadge n={1} done={aiReady} />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold text-slate-100">
-                    Add your Anthropic API key
+                    Choose how to power AI features
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Powers company research and resume generation. Get a key at{" "}
-                    <a
-                      href="https://console.anthropic.com"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sky-400 underline-offset-2 hover:underline"
-                    >
-                      console.anthropic.com
-                    </a>{" "}
-                    — it&apos;s stored in your account and used only for your
-                    own research and generation.
+                    Company research and document generation need one of the
+                    two — pick whichever suits you (you can switch anytime).
                   </p>
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      type={showKey ? "text" : "password"}
-                      autoComplete="off"
-                      value={keyDraft}
-                      onChange={(e) => setKeyDraft(e.target.value)}
-                      placeholder="sk-ant-…"
-                      className={inputCls}
-                      aria-label="Anthropic API key"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKey((v) => !v)}
-                      className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
-                      aria-pressed={showKey}
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {/* Option A: bring your own key */}
+                    <div
+                      className={`rounded-xl border p-4 ${
+                        hasKey
+                          ? "border-emerald-500/40 bg-emerald-500/5"
+                          : "border-slate-700 bg-slate-950/40"
+                      }`}
                     >
-                      {showKey ? "Hide" : "Show"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void saveApiKey()}
-                      disabled={savingKey}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
+                      <h3 className="text-sm font-semibold text-slate-100">
+                        Free: bring your own key
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                        Add your Anthropic API key and everything runs for
+                        free on your own account. Get one at{" "}
+                        <a
+                          href="https://console.anthropic.com"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sky-400 underline-offset-2 hover:underline"
+                        >
+                          console.anthropic.com
+                        </a>
+                        .
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        <div className="flex gap-2">
+                          <input
+                            type={showKey ? "text" : "password"}
+                            autoComplete="off"
+                            value={keyDraft}
+                            onChange={(e) => setKeyDraft(e.target.value)}
+                            placeholder="sk-ant-…"
+                            className={inputCls}
+                            aria-label="Anthropic API key"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowKey((v) => !v)}
+                            className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
+                            aria-pressed={showKey}
+                          >
+                            {showKey ? "Hide" : "Show"}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void saveApiKey()}
+                          disabled={savingKey}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
+                        >
+                          {savingKey && <Spinner className="h-3 w-3" />}
+                          Save key
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Option B: pay-as-you-go credits */}
+                    <div
+                      className={`rounded-xl border p-4 ${
+                        hasCredits
+                          ? "border-emerald-500/40 bg-emerald-500/5"
+                          : "border-slate-700 bg-slate-950/40"
+                      }`}
                     >
-                      {savingKey && <Spinner className="h-3 w-3" />}
-                      Save
-                    </button>
+                      <h3 className="text-sm font-semibold text-slate-100">
+                        Easy: pay-as-you-go credits
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                        No API key needed — top up a small balance and pay
+                        per generation: research{" "}
+                        {formatCents(RESEARCH_PRICE_CENTS)}, resume{" "}
+                        {formatCents(RESUME_PRICE_CENTS)}, cover letter{" "}
+                        {formatCents(COVER_LETTER_PRICE_CENTS)}.
+                      </p>
+                      {hasCredits && (
+                        <p className="mt-2 text-xs font-medium text-emerald-400">
+                          Balance: {formatCents(profile?.credits_cents ?? 0)}
+                        </p>
+                      )}
+                      <Link
+                        href="/billing"
+                        className="mt-3 inline-block rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
+                      >
+                        {hasCredits ? "Manage credits →" : "Buy credits →"}
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </div>

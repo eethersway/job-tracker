@@ -4,8 +4,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from "@/lib/env";
 
 /**
  * Auth middleware: refreshes the Supabase session cookie and protects every
- * route except /login (and Next.js internals / static assets, excluded via
- * the matcher below).
+ * route except the public landing page (/), /login, /signup, and /auth/*
+ * (plus Next.js internals / static assets, excluded via the matcher below).
  */
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -41,8 +41,11 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/signup");
-  // Supabase auth callbacks (email confirmation links, etc.) must stay public.
-  const isPublic = isAuthPage || pathname.startsWith("/auth");
+  // Public: the marketing landing page, auth pages, and Supabase auth
+  // callbacks (email confirmation links, etc.). Signed-in users may still
+  // visit "/" — they just get an "Open dashboard" button there.
+  const isPublic =
+    pathname === "/" || isAuthPage || pathname.startsWith("/auth");
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
@@ -53,7 +56,7 @@ export async function middleware(request: NextRequest) {
 
   if (user && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    url.pathname = "/dashboard";
     url.search = "";
     return NextResponse.redirect(url);
   }

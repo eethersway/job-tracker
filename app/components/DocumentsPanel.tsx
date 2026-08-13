@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Markdown } from "@/components/Markdown";
 import { Spinner } from "@/components/Spinner";
@@ -13,6 +14,12 @@ import {
   takeResult,
   type GenerationResult,
 } from "@/lib/generation";
+import {
+  COVER_LETTER_PRICE_CENTS,
+  RESUME_PRICE_CENTS,
+  RESUME_RESEARCH_SURCHARGE_CENTS,
+  formatCents,
+} from "@/lib/pricing";
 import type { DocumentRow, DocumentType } from "@/lib/types";
 
 interface DocumentsPanelProps {
@@ -31,6 +38,16 @@ interface DocumentsPanelProps {
    * a fresh fit assessment to callouts_md).
    */
   onApplicationChanged?: () => Promise<void> | void;
+  /**
+   * Whether the profile has an Anthropic API key (free tier). Null while the
+   * parent is still loading the profile — no price tag is shown then.
+   */
+  hasApiKey?: boolean | null;
+  /**
+   * Whether company research has already run for this application. Resume
+   * generation runs it first when it hasn't, which costs extra on credits.
+   */
+  researchDone?: boolean;
 }
 
 const TYPE_META: Record<
@@ -59,9 +76,18 @@ export function DocumentsPanel({
   filenameHint,
   calloutsMd,
   onApplicationChanged,
+  hasApiKey = null,
+  researchDone = false,
 }: DocumentsPanelProps) {
   const { showToast } = useToast();
   const meta = TYPE_META[type];
+  const [insufficientCredits, setInsufficientCredits] = useState(false);
+
+  const priceCents =
+    type === "resume"
+      ? RESUME_PRICE_CENTS +
+        (researchDone ? 0 : RESUME_RESEARCH_SURCHARGE_CENTS)
+      : COVER_LETTER_PRICE_CENTS;
 
   const docs = documents
     .filter((d) => d.type === type)
@@ -99,6 +125,16 @@ export function DocumentsPanel({
           if (type === "resume") await h.onApplicationChanged?.();
           if (result.document_id) setSelectedId(result.document_id);
         })();
+      } else if (result.insufficientCredits) {
+        setInsufficientCredits(true);
+        h.showToast(
+          `Not enough credits${
+            result.neededCents != null
+              ? ` — this generation needs ${formatCents(result.neededCents)}`
+              : ""
+          }. Top up on the Billing page.`,
+          "error"
+        );
       } else {
         h.showToast(
           `Generation failed: ${result.error ?? "unknown error"}`,
@@ -125,6 +161,7 @@ export function DocumentsPanel({
   }, [selected?.id]);
 
   function generate() {
+    setInsufficientCredits(false);
     startGeneration(applicationId, type);
   }
 
@@ -193,17 +230,61 @@ export function DocumentsPanel({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-slate-200">{meta.title}</h3>
-        <button
-          onClick={generate}
-          disabled={generating}
-          className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-60"
-        >
-          {generating && <Spinner className="h-4 w-4" />}
-          {generating
-            ? "Generating (runs company research first if needed - up to 2 min)"
-            : meta.generateLabel}
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {hasApiKey !== null &&
+            !generating &&
+            (hasApiKey ? (
+              <span className="text-xs text-slate-500">
+                (free — using your API key)
+              </span>
+            ) : (
+              <span
+                className="rounded-full border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-xs font-medium text-slate-300"
+                title={
+                  type === "resume" && !researchDone
+                    ? `Includes ${formatCents(
+                        RESUME_RESEARCH_SURCHARGE_CENTS
+                      )} for company research, which runs first`
+                    : undefined
+                }
+              >
+                {formatCents(priceCents)}
+                {type === "resume" && !researchDone && (
+                  <span className="font-normal text-slate-500">
+                    {" "}
+                    incl. research
+                  </span>
+                )}
+              </span>
+            ))}
+          <button
+            onClick={generate}
+            disabled={generating}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-60"
+          >
+            {generating && <Spinner className="h-4 w-4" />}
+            {generating
+              ? "Generating (runs company research first if needed - up to 2 min)"
+              : meta.generateLabel}
+          </button>
+        </div>
       </div>
+
+      {insufficientCredits && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-200"
+        >
+          Not enough credits for this generation.{" "}
+          <Link
+            href="/billing"
+            className="font-medium text-sky-400 underline-offset-2 hover:underline"
+          >
+            Top up on the Billing page
+          </Link>
+          .
+        </div>
+      )}
 
       {type === "resume" && calloutsMd && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
